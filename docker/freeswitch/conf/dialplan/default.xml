@@ -15,5 +15,29 @@
         <action application="hangup"/>
       </condition>
     </extension>
+
+    <!-- Synthetic-call harness destinations (scripts/run-call-load.sh). Every one is bounded by
+         sched_hangup, none leaves FreeSWITCH, and there is deliberately no catch-all route:
+         unknown numbers fail with NO_ROUTE_DESTINATION. -->
+
+    <!-- 9390: near leg. Answers and parks until the harness' bridge ends (hard cap 130 s). -->
+    <extension name="lab_leg_a">
+      <condition field="destination_number" expression="^9390$">
+        <action application="sched_hangup" data="+130 ALLOTTED_TIMEOUT"/>
+        <action application="answer"/>
+        <action application="park"/>
+      </condition>
+    </extension>
+
+    <!-- 93000..93120: far leg. Answers, holds N seconds, hangs up with NORMAL_CLEARING. -->
+    <extension name="lab_hold">
+      <condition field="destination_number" expression="^93(0[0-9]{2}|1[01][0-9]|120)$">
+        <action application="set" data="lab_hold_s=$1"/>
+        <action application="sched_hangup" data="+130 ALLOTTED_TIMEOUT"/>
+        <action application="answer"/>
+        <action application="sleep" data="${lab_hold_s}000"/>
+        <action application="hangup" data="NORMAL_CLEARING"/>
+      </condition>
+    </extension>
   </context>
 </include>

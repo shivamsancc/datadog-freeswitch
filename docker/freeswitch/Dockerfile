@@ -37,12 +37,12 @@ RUN ./configure --prefix=/usr/local/freeswitch --disable-debug --disable-zrtp \
 
 FROM ${DEBIAN_IMAGE}
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ca-certificates python3-minimal libssl3 zlib1g libcurl4 libpcre3 libspeex1 libspeexdsp1 libedit2 \
+      ca-certificates python3 libssl3 zlib1g libcurl4 libpcre3 libspeex1 libspeexdsp1 libedit2 \
       libsqlite3-0 libldns3 libtiff6 libjpeg62-turbo libuuid1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=build /usr/local/lib/libsofia-sip-ua*.so* /usr/local/lib/libspandsp*.so* /usr/local/lib/
 COPY --from=build /usr/local/freeswitch /usr/local/freeswitch
-COPY bin/esl-check bin/fs-cli /usr/local/bin/
+COPY bin/ /usr/local/bin/
 RUN ldconfig \
     && groupadd -r --gid=999 freeswitch && useradd -r -g freeswitch --uid=999 freeswitch \
     && ln -s /usr/local/freeswitch/bin/fs_cli /usr/local/bin/fs_cli \

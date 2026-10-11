@@ -2,10 +2,10 @@
 
 Development lab for a future Datadog Agent integration for FreeSWITCH.
 
-**Current milestone: 1 – FreeSWITCH Docker lab.** This repository currently contains only the
-lab: a single, version-pinned FreeSWITCH container with an authenticated, private Event Socket
-(ESL) endpoint. The Datadog check, collectors, dashboards and synthetic call generation come in
-later milestones.
+**Current milestone: 4 – resource and ESL baseline** (on top of milestone 1, the Docker lab, milestone 2, ESL credential
+hardening, and milestone 3, the synthetic-call harness). The repository contains a single, version-pinned FreeSWITCH container with
+an authenticated, private Event Socket (ESL) endpoint and a bounded local call generator. The Datadog check,
+collectors, dashboards and monitors come in later milestones.
 
 > **This is a development lab, not a production deployment recipe.** It is intentionally
 > minimal, runs a stripped-down module set and ships no real SIP users or carrier connectivity.
@@ -48,7 +48,7 @@ scripts/lab-down.sh --purge   # ... and delete the volumes
 | `.env` (git-ignored) | `LAB_SUBNET`, `HOST_BIND_ADDR`. No secrets. |
 | `docker/freeswitch/conf/` | FreeSWITCH config, bind-mounted **read-only** at `/usr/local/freeswitch/conf`. Version-controlled, contains no secrets. |
 | `docker/freeswitch/modules.conf` | Build-time module selection. |
-| `docker/freeswitch/bin/` | `esl-check` (stdlib Python ESL client used by the health check) and `fs-cli` (password-safe `fs_cli` wrapper). |
+| `docker/freeswitch/bin/` | `esl-check` (stdlib Python ESL client used by the health check), `fs-cli` (password-safe `fs_cli` wrapper), `esl-load` / `esl-measure` / `esl_lab.py` (call harness and sampler; see below). |
 | named volumes `freeswitch-log`, `freeswitch-db` | Runtime logs and sqlite state. |
 
 FreeSWITCH has no built-in env-var → config mapping. `conf/vars.xml` uses the XML preprocessor
@@ -123,7 +123,7 @@ extension passwords.
 ## Local test dialplan (no carrier)
 
 `conf/dialplan/default.xml` defines two local-only extensions in the `default` context:
-`9197` (answer, play a 2 s 440 Hz tone, hang up) and `9198` (answer, sleep 10 s, hang up).
+`9197` (answer, play a 2 s 440 Hz tone, hang up) and `9198` (answer, sleep 10 s, hang up). The harness destinations are described below.
 Nothing is called automatically at startup. One manual call:
 
 ```bash
@@ -132,14 +132,180 @@ docker compose exec freeswitch fs-cli -x "originate loopback/9197/default &echo"
 
 `scripts/verify-lab.sh --call-test` does exactly this once.
 
-## Preparing for the synthetic-call milestone
+## Synthetic call test harness (milestone 3)
 
-Needed later, not built now: (1) a controlled generator (SIPp container on the `lab` network, or
-ESL `originate` driven by script) with an explicit rate/duration/concurrency cap; (2) SIP users or
-an ACL-based inbound path so external generators are accepted (the directory is empty today);
-(3) `ext-rtp-ip`/`ext-sip-ip` if media must cross the Docker NAT to a host SIP client; (4) possibly a
-larger RTP range (update both `switch.conf.xml` and the compose mapping) and higher
-`max-sessions`/`sessions-per-second` (currently 200/30); (5) a `docker stats`/ESL baseline method.
+Nothing generates calls at startup; calls exist only while you run these scripts.
+
+```bash
+scripts/run-call-load.sh --scenario single                         # one call, 5 s
+scripts/run-call-load.sh --scenario concurrent --calls 5 --hold 10 # five simultaneous calls
+scripts/measure-call-state.sh -- --scenario concurrent --calls 5 --hold 10   # same, with before/during/after measurement
+scripts/measure-call-state.sh --snapshot                           # one JSON snapshot of server state
+```
+
+### How a test call works
+
+`esl-load` (inside the container, authenticated ESL, password from the Docker secret) sends
+`originate {origination_uuid=lab-<run>-<batch>-<n>,...}loopback/9390/default &bridge(loopback/93NNN/default)`:
+
+- `9390` answers and parks (near leg); `93000`–`93120` answer, hold N seconds, hang up (far leg). Both are in
+  `conf/dialplan/default.xml`, each with a `sched_hangup +130` backstop. These are `loopback` endpoints only:
+  no SIP gateway, carrier route or external number exists, and there is no catch-all extension.
+- Each call has 4 FreeSWITCH channels (two loopback pairs) and is a bridged call.
+- Every call also gets `execute_on_answer=sched_hangup +<bound> ALLOTTED_TIMEOUT` (hold+10 s, or the cut-off in
+  the `timeout` scenario) and `originate_timeout=10`.
+- Outcomes come from `CHANNEL_CREATE`/`CHANNEL_ANSWER`/`CHANNEL_HANGUP_COMPLETE` events for the harness' own UUIDs
+  and the originate reply, **not** from the originate being accepted:
+  `COMPLETED` (answered, `NORMAL_CLEARING`), `TIMED_OUT` (answered, `ALLOTTED_TIMEOUT`), `FAILED` (`-ERR`, never answered),
+  else `UNEXPECTED_CAUSE` / `INCOMPLETE` / `STUCK_KILLED`. Each scenario has an expected outcome; any mismatch exits 1.
+
+### Scenarios and parameters (`run-call-load.sh`)
+
+| Scenario | Meaning | Expected outcome |
+|---|---|---|
+| `idle` | no calls; observe `--duration` s (default 10) | – |
+| `single` | exactly 1 call | `COMPLETED` |
+| `concurrent` | `--calls N` simultaneous calls (default 3, min 2) | `COMPLETED` |
+| `normal` | `--calls N` (default 1) that finish after `--hold` s | `COMPLETED` |
+| `timeout` | far end would hold ~120 s; cut at `--hold` s | `TIMED_OUT` (`ALLOTTED_TIMEOUT`) |
+| `fail` | dial the intentionally unrouted extension `9998` | `FAILED` (`NO_ROUTE_DESTINATION`) |
+
+| Option | Default | Limit |
+|---|---|---|
+| `--calls N` | scenario-specific (1–3) | ≤ 5; 6–20 requires `--allow-high`; **hard limit 20** |
+| `--hold S` | 5 | 1–60 |
+| `--duration S` | 0 = exactly one batch; else repeat batches while they fit | ≤ 600 |
+| `--ramp R` (calls/s) | 2 | 0.1–5 |
+| `--pause S` between batches | 0 | ≤ 60 |
+| `--max-batches N` | 1 | ≤ 50; total calls per run capped at 200 |
+| `--dry-run` | – | validate and print the plan only |
+| `--result-file F` | – | also write the JSON result to F |
+
+Invalid input exits 4 with a message; nothing is launched. Limits are enforced twice (bash and the in-container tool).
+
+Exit codes: 0 as expected · 1 outcome mismatch/failure · 2 ESL auth rejected · 3 ESL unreachable · 4 invalid arguments / lab not
+running or unhealthy · 5 channels from this run left behind.
+
+### Safety and cleanup
+
+- Only UUIDs of the form `lab-<run_id>-…` are ever killed: by exact UUID on stuck calls, by that prefix in cleanup. There is no
+  `hupall` or other broad command.
+- Ctrl-C / SIGTERM on the script stops the generator (a per-run stop file) and kills that run's channels. A call placed by
+  something else survived this in testing. The generator also has its own deadline, so it cannot run on unattended.
+- On normal exit the generator verifies none of its channels remain (`cleanup.remaining` in the result; non-empty → exit 5).
+- Calls that never finish within the batch deadline are killed and reported as `STUCK_KILLED` (exit 1).
+
+### Measurement methodology (`measure-call-state.sh`)
+
+It takes a snapshot before, starts a 1 s sampler, waits ~3 s, runs the load, waits `--settle` s (default 6), stops the sampler,
+takes a snapshot after, and summarizes. Files go to `results/<UTC timestamp>/` (git-ignored): `before.json`, `samples.jsonl`,
+`after.json`, `load.json`, `summary.json`. It exits nonzero if the load failed or the server did not return to its baseline.
+
+| Field | Source | Scope |
+|---|---|---|
+| `total_channels` | `show channels as json` | **TOTAL** (all channels) |
+| `loopback_channels` | channels named `loopback/*` | TOTAL (both legs of every loopback pair) |
+| `lab_legs` | channels whose UUID starts `lab-` | **TEST** (one per active harness call) |
+| `show_calls_rows` | `show calls as json` | TOTAL; raw rows, **not a call count** (1 bridged test call = 3 rows) |
+| `sessions_current`, `sessions_peak`, `sessions_since_startup`, `sessions_max` | `status` | TOTAL |
+| `counters.initiated/answered/completed/timed_out/failed` | harness events | **TEST** |
+| `container_cpu_pct_*`, `container_mem_mib_*` | container cgroup `cpu.stat` / `memory.current` | whole container |
+| `freeswitch_cpu_pct_*`, `freeswitch_rss_mib_*`, threads | `/proc/<pid>` | FreeSWITCH process |
+
+CPU % is the delta of cumulative CPU time over the sample interval (100 % = one core). Timestamps are UTC.
+
+### Observed on the dev machine (Docker Desktop, arm64, 1 s sampling)
+
+| Scenario | Peak channels (total / test legs) | Result | Peak FS CPU % | Peak container mem MiB |
+|---|---|---|---|---|
+| idle, 10 s | 0 / 0 | back to 0 | ~5 | ~47 |
+| 1 call, 4–8 s | 4 / 1 | 1 completed | ~4–10 | ~39 |
+| 5 calls, 6–10 s | 20 / 5 | 5 completed | ~7–8 | ~49 |
+| 10 calls, 6–10 s | 40 / 10 | 10 completed | ~12–23 | ~59–61 |
+| 3 timeout calls | 12 / 3 | 3 `ALLOTTED_TIMEOUT` | ~8 | ~62 |
+| 3 failing calls | 0 / 0 (shorter than the sample interval) | 3 `NO_ROUTE_DESTINATION` | ~6 | ~62 |
+
+These are single runs on a laptop VM, not benchmarks; the sampler itself costs some CPU.
+
+### Limitations
+
+- Loopback calls exercise FreeSWITCH's channel/bridge/dialplan paths but not SIP signalling, real RTP/codec transcoding or the
+  network; a SIPp-based generator would be needed for that and was deliberately not added.
+- Call media is silence/hold: no tone or codec load.
+- `show calls` semantics for loopback are odd (3 rows per bridged call); use `lab_legs` or the harness counters for call counts.
+- Failures that last under the sampler interval are visible only in the harness counters, not in channel samples.
+- Hard cap 20 calls (80 channels) is a lab safety choice, well below `max-sessions=200`; `sessions-per-second=30` is not
+  reached with `--ramp ≤ 5`.
+- Not tested: running two harness instances at once (UUIDs are namespaced by run id, but their combined load is not capped),
+  or FreeSWITCH dying mid-run (the harness reports connection errors and exits non-zero but this path is only reasoned, not exercised).
+
+## Resource and ESL baseline (milestone 4)
+
+A repeatable reference measurement of FreeSWITCH *without* any monitoring, to be compared later against a
+collector-enabled run. No Datadog component is involved.
+
+```bash
+scripts/lab-up.sh
+scripts/run-baseline.sh                      # defaults: 3 repetitions of idle, one, five, ten calls (~25 min)
+scripts/run-baseline.sh --reps 1 --scenarios "idle one" --label smoke    # quick smoke test
+tests/run-unit-tests.sh                      # unit tests for the measurement math/parsers
+```
+
+Do not run other load or heavy work on the host while it runs. Results are written to
+`results/baseline/<UTC timestamp>-<id>/` (git-ignored; a new directory every run, never overwritten):
+`report.md`, `summary.json`, `meta.json`, `env.json`, `raw.jsonl` (one JSON line per phase, including raw CPU/memory readings and every
+query latency), `phases/` (per-phase JSON, harness logs).
+
+| Option | Default | Limit |
+|---|---|---|
+| `--reps N` | 3 | 1–10 |
+| `--scenarios "…"` | `idle one five ten` | subset of those names (10 calls needs the harness' `--allow-high`, applied automatically; the harness hard limit of 20 and hold limit of 60 s are unchanged) |
+| `--warmup S` | 8 | 0–60 |
+| `--window S` | 25 | 5–120 (resource window) |
+| `--queries Q` | 15 | 5–100 per series |
+| `--rate R` | 2 | 0.2–5 queries/s |
+
+The script refuses parameters that would need a call hold above 60 s.
+
+Regenerate a report from stored raw data (no lab interaction beyond the container's Python):
+`docker compose exec -T freeswitch esl-baseline report --run-meta "$(cat DIR/meta.json)" < DIR/raw.jsonl > DIR/report.md`
+
+### Procedure
+
+1. Preflight: container healthy, FreeSWITCH uptime ≥ 60 s (never measures during startup), 0 channels.
+2. For each repetition and scenario, two phases with their own bounded call load (so benchmark queries never perturb the
+   CPU/memory window):
+   - **resources**: wait for exactly 4×N channels, warm up, sample `/proc` and cgroup counters at 1 s for the window
+     (no ESL polling; ESL snapshots only at start/middle/end).
+   - **esl**: warm up, then benchmark five series **sequentially**: `api status`, `api uptime s`, `api show channels count`,
+     `api show calls count` (persistent authenticated connection) and `api status` with a new connection per query.
+3. After each phase: harness must succeed, channels return to 0, container still healthy; otherwise the run aborts and a
+   partial report is written. Ctrl-C/TERM stops the harness and cleans up only its own calls.
+
+### Measurement definitions
+
+- **CPU %** = delta of a cumulative counter ÷ elapsed `time.monotonic()` seconds; 100 % = one core. Container CPU is from cgroup
+  `cpu.stat usage_usec`; FreeSWITCH process CPU from `/proc/<pid>/stat` utime+stime ÷ `CLK_TCK`. "Window avg" uses the whole
+  window; "peak" is the largest 1 s interval. Cumulative counters are never reported as percentages.
+- **Memory**: container `memory.current` (includes page cache), container **working set** = `memory.current − inactive_file`,
+  and FreeSWITCH **process RSS** are separate quantities and reported separately; the cgroup limit is recorded
+  (`max` = unlimited; the lab sets none).
+- **Channels/sessions**: `show channels as json`, `status` (current/peak/max sessions), `show calls count` rows.
+- **Calls**: initiated/answered/completed/failed from the call harness' own event tracking.
+- **ESL latency**: round trip measured with `time.monotonic()`; n, ok/failed/timeouts, mean, median, p95 (only if ≥ 20 pooled
+  samples), max, response bytes, value range under load.
+
+### Order effect to be aware of
+
+In the reference run, idle FreeSWITCH RSS was 35.5 MiB in repetition 1 and 56.7/58.9 MiB in repetitions 2/3: memory grown by
+earlier call loads was not returned within the run. Idle numbers therefore depend on what ran before them. For the later
+monitoring comparison, use the same order, restart the container before each run, or compare against idle repetition 1 only.
+
+### Known limitations
+
+See the "Known limitations" section of each generated `report.md`. In short: single host and VM with other workloads; loopback calls
+without RTP/codecs; 1 s sampling; small query counts; no resource limits set; amd64/Linux untested; results are a reference for
+a later *relative* comparison, not a production overhead figure.
 
 ## Verification
 
@@ -178,7 +344,7 @@ scripts/verify-lab.sh       # running lab: health, fs_cli, modules, ESL auth goo
   - `esl-check` and `fs-cli` hold it in process memory (and `fs-cli` briefly in a 0600 temp file in a 0700 dir under `/tmp`).
   - A wrong-password probe uses `docker compose exec -e LAB_BAD_PW=wrong-password`; that is a throwaway test value, not the real secret.
   - Do not copy `secrets/` into images, backups, CI logs or chat. `.dockerignore` excludes it from build contexts.
-  - The Python in the image is `python3-minimal` (about 11 MB), added only for `esl-check`.
+  - The image contains Debian's `python3` (stdlib only, no pip packages) for `esl-check`, `esl-load` and `esl-measure`.
 - `sofia`'s `${local_ip_v4}` is the container IP; remote SDP will advertise it.
 - Module set is minimal (no codecs beyond core PCMU/PCMA, no voicemail/conference/etc).
 

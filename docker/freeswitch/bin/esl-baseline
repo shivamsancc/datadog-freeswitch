@@ -1,0 +1,907 @@
+#!/usr/bin/env python3
+"""Baseline measurement phases for the FreeSWITCH lab (runs inside the container).
+
+  esl-baseline env      [--fact K=V ...]                       environment description (JSON line)
+  esl-baseline resources --calls N --warmup S --window S      CPU/memory/channel/session phase (JSON line)
+  esl-baseline esl       --calls N --warmup S --queries Q --rate R   ESL command latency phase (JSON line)
+  esl-baseline settle    --timeout S                          wait until 0 channels (JSON line)
+  esl-baseline report    < raw.jsonl                          Markdown report (--json for summary JSON)
+
+It never places calls itself; scripts/run-baseline.sh starts the (bounded) harness separately.
+All durations use time.monotonic(); wall-clock timestamps are for labelling only.
+CPU utilisation is always computed as (delta of a cumulative CPU counter) / (elapsed monotonic seconds),
+expressed in % of ONE core (100 % = one fully busy core). Cumulative counters are never reported as %.
+
+Exit codes: 0 ok | 1 measurement failed (unhealthy, calls not reached, ESL failures) | 2 auth | 3 ESL unreachable | 4 usage
+"""
+import argparse
+import importlib.machinery
+import importlib.util
+import json
+import math
+import os
+import platform
+import re
+import statistics
+import sys
+import time
+from datetime import datetime, timezone
+
+import esl_lab
+from esl_lab import Conn, Fail
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+CALL_CHANNELS = 4                 # channels per harness call (two loopback pairs)
+ESL_TIMEOUT_S = 5.0
+MAX_CONSECUTIVE_FAILURES = 3
+MAX_RATE = 5.0
+QUERY_SERIES = [                  # (name, ESL api command, new connection per query?)
+    ("status", "status", False),
+    ("uptime_s", "uptime s", False),
+    ("show_channels_count", "show channels count", False),
+    ("show_calls_count", "show calls count", False),
+    ("status_new_connection", "status", True),
+]
+
+
+def now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def log(msg):
+    sys.stderr.write("[%s] %s\n" % (now_iso(), msg))
+    sys.stderr.flush()
+
+
+# ---------------------------------------------------------------- pure helpers (unit-tested)
+def percentile(sorted_vals, p):
+    """Linear-interpolation percentile (p in 0..100) of an already sorted list."""
+    if not sorted_vals:
+        return None
+    if len(sorted_vals) == 1:
+        return sorted_vals[0]
+    k = (len(sorted_vals) - 1) * p / 100.0
+    lo, hi = math.floor(k), math.ceil(k)
+    if lo == hi:
+        return sorted_vals[int(k)]
+    return sorted_vals[lo] + (sorted_vals[hi] - sorted_vals[lo]) * (k - lo)
+
+
+def describe(values, p95_min_n=20):
+    """n/mean/median/p95/max/min/stdev. p95 is None unless there are >= p95_min_n samples."""
+    vals = sorted(values)
+    n = len(vals)
+    if n == 0:
+        return {"n": 0, "mean": None, "median": None, "p95": None, "max": None, "min": None, "stdev": None}
+    return {
+        "n": n,
+        "mean": sum(vals) / n,
+        "median": percentile(vals, 50),
+        "p95": percentile(vals, 95) if n >= p95_min_n else None,
+        "max": vals[-1],
+        "min": vals[0],
+        "stdev": statistics.stdev(vals) if n >= 2 else None,
+    }
+
+
+def cpu_pct_from_usec(delta_usec, elapsed_s):
+    """Container CPU %: cumulative cpu.stat usage_usec delta over elapsed seconds (100 = one core)."""
+    if elapsed_s <= 0 or delta_usec < 0:
+        return None
+    return 100.0 * (delta_usec / 1e6) / elapsed_s
+
+
+def cpu_pct_from_ticks(delta_ticks, clk_tck, elapsed_s):
+    """Process CPU %: utime+stime tick delta / CLK_TCK over elapsed seconds (100 = one core)."""
+    if elapsed_s <= 0 or delta_ticks < 0 or clk_tck <= 0:
+        return None
+    return 100.0 * (delta_ticks / clk_tck) / elapsed_s
+
+
+def working_set_bytes(current, inactive_file):
+    """Docker/cAdvisor-style working set for cgroup v2: memory.current - inactive_file."""
+    if current is None:
+        return None
+    return max(current - (inactive_file or 0), 0)
+
+
+def parse_status(text):
+    out = {}
+    m = re.search(r"^(\d+) session\(s\) - peak (\d+)", text, re.M)
+    if m:
+        out["sessions_current"], out["sessions_peak"] = int(m.group(1)), int(m.group(2))
+    m = re.search(r"^(\d+) session\(s\) since startup", text, re.M)
+    if m:
+        out["sessions_since_startup"] = int(m.group(1))
+    m = re.search(r"^(\d+) session\(s\) max", text, re.M)
+    if m:
+        out["sessions_max"] = int(m.group(1))
+    m = re.search(r"^UP (\d+) years?, (\d+) days?, (\d+) hours?, (\d+) minutes?, (\d+) seconds?", text, re.M)
+    if m:
+        y, d, h, mi, s = (int(x) for x in m.groups())
+        out["uptime_s"] = ((y * 365 + d) * 24 + h) * 3600 + mi * 60 + s
+    return out
+
+
+def parse_value(series, text):
+    """The single number each benchmarked command reports (None if the format is unexpected)."""
+    if series.startswith("status"):
+        return parse_status(text).get("sessions_current")
+    if series == "uptime_s":
+        t = text.strip()
+        return int(t) if t.isdigit() else None
+    m = re.search(r"(\d+) total\.", text)
+    return int(m.group(1)) if m else None
+
+
+# ---------------------------------------------------------------- system readers
+def read(path):
+    try:
+        with open(path) as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def find_fs_pid():
+    for d in os.listdir("/proc"):
+        if d.isdigit() and (read("/proc/%s/comm" % d) or "").strip() == "freeswitch":
+            return int(d)
+    return None
+
+
+def cg_int(path):
+    v = (read(path) or "").strip()
+    return int(v) if v.isdigit() else None
+
+
+def read_counters(pid):
+    """One raw reading of every cumulative/instantaneous counter, stamped with monotonic time."""
+    t_mono = time.monotonic()
+    c = {"t_mono": t_mono, "t_utc": now_iso()}
+    cpu = read("/sys/fs/cgroup/cpu.stat") or ""
+    m = re.search(r"^usage_usec (\d+)", cpu, re.M)
+    c["cg_cpu_usec"] = int(m.group(1)) if m else None
+    m = re.search(r"^nr_throttled (\d+)", cpu, re.M)
+    c["cg_nr_throttled"] = int(m.group(1)) if m else None
+    c["cg_mem_current"] = cg_int("/sys/fs/cgroup/memory.current")
+    mem_stat = read("/sys/fs/cgroup/memory.stat") or ""
+    m = re.search(r"^inactive_file (\d+)", mem_stat, re.M)
+    c["cg_inactive_file"] = int(m.group(1)) if m else None
+    m = re.search(r"^anon (\d+)", mem_stat, re.M)
+    c["cg_anon"] = int(m.group(1)) if m else None
+    c["fs_pid"] = pid
+    st = read("/proc/%d/status" % pid) if pid else None
+    stat = read("/proc/%d/stat" % pid) if pid else None
+    if st and stat:
+        m = re.search(r"^VmRSS:\s+(\d+) kB", st, re.M)
+        c["fs_rss_kb"] = int(m.group(1)) if m else None
+        m = re.search(r"^Threads:\s+(\d+)", st, re.M)
+        c["fs_threads"] = int(m.group(1)) if m else None
+        f = stat.rsplit(")", 1)[1].split()
+        c["fs_cpu_ticks"] = int(f[11]) + int(f[12])          # utime + stime
+        try:
+            c["fs_fds"] = len(os.listdir("/proc/%d/fd" % pid))
+        except OSError:
+            c["fs_fds"] = None
+    else:
+        c["fs_rss_kb"] = c["fs_threads"] = c["fs_cpu_ticks"] = c["fs_fds"] = None
+    return c
+
+
+def mib(b):
+    return None if b is None else b / 1048576.0
+
+
+def series_stats(vals):
+    vals = [v for v in vals if v is not None]
+    if not vals:
+        return {"first": None, "mean": None, "peak": None, "last": None}
+    return {"first": vals[0], "mean": sum(vals) / len(vals), "peak": max(vals), "last": vals[-1]}
+
+
+# ---------------------------------------------------------------- ESL helpers
+def channel_view(conn):
+    text = conn.api("show channels as json", ESL_TIMEOUT_S).strip()
+    rows = json.loads(text).get("rows", []) if text and not text.startswith("-ERR") else []
+    return len(rows), sum(1 for r in rows if r.get("uuid", "").startswith("lab-"))
+
+
+def esl_snapshot(conn, t0_mono):
+    """Instantaneous ESL view (separate commands, so values are close in time but not atomic)."""
+    status = parse_status(conn.api("status", ESL_TIMEOUT_S))
+    total, lab = channel_view(conn)
+    calls = parse_value("show_calls_count", conn.api("show calls count", ESL_TIMEOUT_S))
+    return {"at_s": round(time.monotonic() - t0_mono, 2), "t_utc": now_iso(), "total_channels": total,
+            "lab_legs": lab, "show_calls_rows": calls,
+            "sessions_current": status.get("sessions_current"), "sessions_peak": status.get("sessions_peak"),
+            "sessions_max": status.get("sessions_max"), "sessions_since_startup": status.get("sessions_since_startup")}
+
+
+def wait_for_calls(conn, n, timeout_s):
+    """Poll until exactly n harness calls (4n channels) are up. Returns seconds waited."""
+    t0 = time.monotonic()
+    want = n * CALL_CHANNELS
+    last = (None, None)
+    while time.monotonic() - t0 < timeout_s:
+        last = channel_view(conn)
+        if last == (want, n):
+            return time.monotonic() - t0
+        time.sleep(0.25)
+    raise Fail(1, "expected %d channels / %d test legs, saw %s after %.0fs" % (want, n, last, timeout_s))
+
+
+def require_healthy(conn):
+    st = parse_status(conn.api("status", ESL_TIMEOUT_S))
+    if "uptime_s" not in st:
+        raise Fail(1, "FreeSWITCH status did not report UP")
+    return st
+
+
+# ---------------------------------------------------------------- phases
+def phase_resources(a):
+    t0 = time.monotonic()
+    conn = Conn(timeout=ESL_TIMEOUT_S)
+    try:
+        require_healthy(conn)
+        waited = wait_for_calls(conn, a.calls, 30)
+        time.sleep(a.warmup)
+        require_healthy(conn)
+        pid = find_fs_pid()
+        if not pid:
+            raise Fail(1, "freeswitch process not found")
+        snaps = [esl_snapshot(conn, t0)]
+        readings = [read_counters(pid)]
+        window_start = readings[0]["t_mono"]
+        mid_done = False
+        while True:
+            elapsed = time.monotonic() - window_start
+            if elapsed >= a.window:
+                break
+            time.sleep(max(0.0, min(a.interval, a.window - elapsed)))
+            r = read_counters(pid)
+            if r["fs_cpu_ticks"] is None:
+                raise Fail(1, "freeswitch process disappeared during the window")
+            readings.append(r)
+            if not mid_done and r["t_mono"] - window_start >= a.window / 2:
+                snaps.append(esl_snapshot(conn, t0))
+                mid_done = True
+        snaps.append(esl_snapshot(conn, t0))
+        require_healthy(conn)
+    finally:
+        conn.close()
+
+    hz = os.sysconf("SC_CLK_TCK")
+    elapsed = readings[-1]["t_mono"] - readings[0]["t_mono"]
+    cont_int, fs_int = [], []
+    for p, q in zip(readings, readings[1:]):
+        dt = q["t_mono"] - p["t_mono"]
+        cont_int.append(cpu_pct_from_usec(q["cg_cpu_usec"] - p["cg_cpu_usec"], dt))
+        fs_int.append(cpu_pct_from_ticks(q["fs_cpu_ticks"] - p["fs_cpu_ticks"], hz, dt))
+    first, last = readings[0], readings[-1]
+    ws = [working_set_bytes(r["cg_mem_current"], r["cg_inactive_file"]) for r in readings]
+    cpu_max = (read("/sys/fs/cgroup/cpu.max") or "").strip()
+    mem_max = (read("/sys/fs/cgroup/memory.max") or "").strip()
+    want = a.calls * CALL_CHANNELS
+    stable = all(s["total_channels"] == want and s["lab_legs"] == a.calls for s in snaps)
+    ci = [v for v in cont_int if v is not None]
+    fi = [v for v in fs_int if v is not None]
+    return {
+        "kind": "resources", "scenario": a.scenario, "rep": a.rep, "calls": a.calls,
+        "t_start_utc": readings[0]["t_utc"], "t_end_utc": last["t_utc"],
+        "waited_for_calls_s": round(waited, 2), "warmup_s": a.warmup,
+        "window_requested_s": a.window, "window_actual_s": round(elapsed, 3),
+        "sample_interval_s": a.interval, "samples": len(readings),
+        "esl_snapshots": snaps,
+        "expected": {"channels": want, "test_legs": a.calls},
+        "validation": {"counts_as_expected_in_all_snapshots": stable},
+        "cpu_pct_of_one_core": {
+            "method": "delta of cumulative counter / elapsed monotonic seconds",
+            "container_window_avg": cpu_pct_from_usec(last["cg_cpu_usec"] - first["cg_cpu_usec"], elapsed),
+            "container_peak_interval": max(ci) if ci else None,
+            "container_interval_stats": describe(ci),
+            "freeswitch_window_avg": cpu_pct_from_ticks(last["fs_cpu_ticks"] - first["fs_cpu_ticks"], hz, elapsed),
+            "freeswitch_peak_interval": max(fi) if fi else None,
+            "freeswitch_interval_stats": describe(fi),
+            "container_cpu_usec_delta": last["cg_cpu_usec"] - first["cg_cpu_usec"],
+            "freeswitch_cpu_ticks_delta": last["fs_cpu_ticks"] - first["fs_cpu_ticks"],
+            "clk_tck": hz,
+            "throttled_periods_delta": (last["cg_nr_throttled"] or 0) - (first["cg_nr_throttled"] or 0),
+        },
+        "memory_mib": {
+            "container_usage_memory_current": {k: mib(v) for k, v in series_stats([r["cg_mem_current"] for r in readings]).items()},
+            "container_working_set": {k: mib(v) for k, v in series_stats(ws).items()},
+            "container_anon": {k: mib(v) for k, v in series_stats([r["cg_anon"] for r in readings]).items()},
+            "freeswitch_process_rss": {k: (None if v is None else v / 1024.0)
+                                       for k, v in series_stats([r["fs_rss_kb"] for r in readings]).items()},
+            "container_limit": None if mem_max in ("", "max") else mib(int(mem_max)),
+        },
+        "freeswitch_process": {"threads": series_stats([r["fs_threads"] for r in readings]),
+                               "open_fds": series_stats([r["fs_fds"] for r in readings])},
+        "cpu_limit_cgroup": cpu_max,
+        "raw_readings": [{k: r[k] for k in ("t_utc", "cg_cpu_usec", "cg_mem_current", "cg_inactive_file",
+                                           "fs_cpu_ticks", "fs_rss_kb")} | {"t_mono_rel": round(r["t_mono"] - window_start, 3)}
+                         for r in readings],
+        "loadavg_after": (read("/proc/loadavg") or "").split()[:3],
+    }
+
+
+def run_series(name, command, new_conn, queries, rate):
+    lat, size, vals = [], [], []
+    ok = fail = timeouts = errors_auth = 0
+    sample = None
+    conn = None
+    connect_ms = None
+    consecutive = 0
+    start = time.monotonic()
+    try:
+        for i in range(queries):
+            due = start + i / rate                      # fixed schedule: no drift, no bursts
+            delay = due - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+            t0 = time.monotonic()
+            try:
+                if new_conn or conn is None:
+                    tc = time.monotonic()
+                    if conn is not None:
+                        conn.close()
+                    conn = Conn(timeout=ESL_TIMEOUT_S)
+                    if connect_ms is None:
+                        connect_ms = (time.monotonic() - tc) * 1000.0
+                text = conn.api(command, ESL_TIMEOUT_S)
+                t1 = time.monotonic()
+                if new_conn:
+                    conn.close()
+                    conn = None
+                if text.startswith("-ERR"):
+                    raise Fail(1, "command error")
+                lat.append((t1 - t0) * 1000.0)
+                size.append(len(text.encode("utf-8")))
+                v = parse_value(name, text)
+                if v is not None:
+                    vals.append(v)
+                if sample is None:
+                    sample = text[:300]
+                ok += 1
+                consecutive = 0
+            except Fail as exc:
+                fail += 1
+                consecutive += 1
+                if exc.message == "timed out":
+                    timeouts += 1
+                if exc.code == 2:
+                    errors_auth += 1
+                if conn is not None:                 # a late reply would desynchronise the stream
+                    conn.close()
+                    conn = None
+                if consecutive >= MAX_CONSECUTIVE_FAILURES:
+                    raise Fail(1, "%d consecutive failures on '%s'; aborting series" % (consecutive, command))
+    finally:
+        if conn is not None:
+            conn.close()
+    return {
+        "series": name, "command": "api " + command, "new_connection_per_query": new_conn,
+        "queries_planned": queries, "ok": ok, "failed": fail, "timeouts": timeouts,
+        "auth_failures": errors_auth, "rate_per_s": rate,
+        "connect_auth_ms_first": connect_ms,
+        "latency_ms": describe(lat), "response_bytes": describe(size),
+        "latency_ms_raw": [round(x, 3) for x in lat],
+        "values": {"min": min(vals) if vals else None, "max": max(vals) if vals else None,
+                   "distinct": len(set(vals)), "first": vals[0] if vals else None, "last": vals[-1] if vals else None},
+        "sample_response_head": sample,
+        "elapsed_s": round(time.monotonic() - start, 2),
+    }
+
+
+def phase_esl(a):
+    t0 = time.monotonic()
+    conn = Conn(timeout=ESL_TIMEOUT_S)
+    try:
+        require_healthy(conn)
+        waited = wait_for_calls(conn, a.calls, 30)
+        time.sleep(a.warmup)
+        before = esl_snapshot(conn, t0)
+    finally:
+        conn.close()
+    results = []
+    started = now_iso()
+    for name, cmd, newc in QUERY_SERIES:        # strictly sequential: one benchmark client at a time
+        results.append(run_series(name, cmd, newc, a.queries, a.rate))
+    conn = Conn(timeout=ESL_TIMEOUT_S)
+    try:
+        after = esl_snapshot(conn, t0)
+        require_healthy(conn)
+    finally:
+        conn.close()
+    want = a.calls * CALL_CHANNELS
+    return {
+        "kind": "esl", "scenario": a.scenario, "rep": a.rep, "calls": a.calls,
+        "t_start_utc": started, "t_end_utc": now_iso(),
+        "waited_for_calls_s": round(waited, 2), "warmup_s": a.warmup,
+        "queries_per_series": a.queries, "rate_per_s": a.rate,
+        "expected": {"channels": want, "test_legs": a.calls},
+        "esl_snapshots": [before, after],
+        "validation": {"counts_as_expected_before_and_after":
+                       all(s["total_channels"] == want and s["lab_legs"] == a.calls for s in (before, after))},
+        "series": results,
+    }
+
+
+def phase_settle(a):
+    t0 = time.monotonic()
+    conn = Conn(timeout=ESL_TIMEOUT_S)
+    try:
+        while True:
+            total, lab = channel_view(conn)
+            if total == 0 and lab == 0:
+                break
+            if time.monotonic() - t0 > a.timeout:
+                return {"kind": "settle", "returned_to_baseline": False, "channels_remaining": total,
+                        "test_legs_remaining": lab, "waited_s": round(time.monotonic() - t0, 2)}
+            time.sleep(0.5)
+        st = parse_status(conn.api("status", ESL_TIMEOUT_S))
+        return {"kind": "settle", "returned_to_baseline": True, "channels_remaining": 0,
+                "sessions_current": st.get("sessions_current"), "waited_s": round(time.monotonic() - t0, 2)}
+    finally:
+        conn.close()
+
+
+def phase_env(a):
+    conn = Conn(timeout=ESL_TIMEOUT_S)
+    try:
+        version = conn.api("version", ESL_TIMEOUT_S).strip()
+        st = parse_status(conn.api("status", ESL_TIMEOUT_S))
+    finally:
+        conn.close()
+    conf = []
+    base = "/usr/local/freeswitch/conf"
+    import hashlib
+    h = hashlib.sha256()
+    for root, _, files in sorted(os.walk(base)):
+        for f in sorted(files):
+            p = os.path.join(root, f)
+            with open(p, "rb") as fh:
+                h.update(p[len(base):].encode() + b"\0" + fh.read())
+            conf.append(p[len(base):])
+    cpuinfo = read("/proc/cpuinfo") or ""
+    meminfo = read("/proc/meminfo") or ""
+    m = re.search(r"^MemTotal:\s+(\d+) kB", meminfo, re.M)
+    facts = {}
+    for kv in a.fact or []:
+        k, _, v = kv.partition("=")
+        facts[k] = v
+    return {
+        "kind": "env", "t_utc": now_iso(),
+        "freeswitch_version": version, "freeswitch_uptime_s_at_start": st.get("uptime_s"),
+        "sessions_max": st.get("sessions_max"),
+        "config_sha256": h.hexdigest(), "config_files": len(conf),
+        "container": {
+            "kernel": platform.release(), "machine": platform.machine(), "python": platform.python_version(),
+            "cpu_count_visible": os.cpu_count(),
+            "vm_mem_total_mib": int(m.group(1)) / 1024.0 if m else None,
+            "cgroup_cpu_max": (read("/sys/fs/cgroup/cpu.max") or "").strip(),
+            "cgroup_memory_max": (read("/sys/fs/cgroup/memory.max") or "").strip(),
+            "loadavg": (read("/proc/loadavg") or "").split()[:3],
+            "clk_tck": os.sysconf("SC_CLK_TCK"),
+            "cpu_model": next((l.split(":", 1)[1].strip() for l in cpuinfo.splitlines()
+                               if l.lower().startswith(("model name", "cpu part", "hardware"))), None),
+        },
+        "host": facts,
+    }
+
+
+# ---------------------------------------------------------------- report
+def agg(vals):
+    vals = [v for v in vals if v is not None]
+    if not vals:
+        return None
+    sd = statistics.stdev(vals) if len(vals) >= 2 else None
+    mean = sum(vals) / len(vals)
+    return {"n": len(vals), "mean": mean, "stdev": sd, "min": min(vals), "max": max(vals),
+            "cv_pct": (100.0 * sd / mean) if sd is not None and mean else None}
+
+
+def fmt(v, nd=2):
+    return "–" if v is None else ("%.*f" % (nd, v))
+
+
+def fmt_agg(g, nd=2):
+    if not g:
+        return "–"
+    s = "%s" % fmt(g["mean"], nd)
+    if g["stdev"] is not None:
+        s += " ± %s" % fmt(g["stdev"], nd)
+    return s + " (n=%d)" % g["n"]
+
+
+def build_summary(records):
+    env = next((r for r in records if r.get("kind") == "env"), {})
+    runs = [r for r in records if r.get("kind") != "env"]
+    scenarios = []
+    for r in runs:
+        if r["phase"]["scenario"] not in scenarios:
+            scenarios.append(r["phase"]["scenario"])
+    out = {"env": env, "scenarios": {}, "anomalies": []}
+    for sc in scenarios:
+        res = [r for r in runs if r["phase"]["scenario"] == sc and r["phase"]["kind"] == "resources"]
+        esl = [r for r in runs if r["phase"]["scenario"] == sc and r["phase"]["kind"] == "esl"]
+        calls = res[0]["phase"]["calls"] if res else (esl[0]["phase"]["calls"] if esl else 0)
+        d = {"calls": calls, "expected_channels": calls * CALL_CHANNELS, "runs_resources": len(res), "runs_esl": len(esl)}
+        P = [r["phase"] for r in res]
+        d["resources"] = {
+            "container_cpu_avg_pct": agg([p["cpu_pct_of_one_core"]["container_window_avg"] for p in P]),
+            "container_cpu_peak_pct": agg([p["cpu_pct_of_one_core"]["container_peak_interval"] for p in P]),
+            "freeswitch_cpu_avg_pct": agg([p["cpu_pct_of_one_core"]["freeswitch_window_avg"] for p in P]),
+            "freeswitch_cpu_peak_pct": agg([p["cpu_pct_of_one_core"]["freeswitch_peak_interval"] for p in P]),
+            "container_working_set_mean_mib": agg([p["memory_mib"]["container_working_set"]["mean"] for p in P]),
+            "container_working_set_peak_mib": agg([p["memory_mib"]["container_working_set"]["peak"] for p in P]),
+            "container_memory_current_peak_mib": agg([p["memory_mib"]["container_usage_memory_current"]["peak"] for p in P]),
+            "freeswitch_rss_mean_mib": agg([p["memory_mib"]["freeswitch_process_rss"]["mean"] for p in P]),
+            "freeswitch_rss_peak_mib": agg([p["memory_mib"]["freeswitch_process_rss"]["peak"] for p in P]),
+            "freeswitch_threads_peak": agg([p["freeswitch_process"]["threads"]["peak"] for p in P]),
+            "freeswitch_open_fds_peak": agg([p["freeswitch_process"]["open_fds"]["peak"] for p in P]),
+        }
+        counters = {"initiated": 0, "answered": 0, "completed": 0, "timed_out": 0, "failed": 0}
+        n_load = 0
+        for r in res + esl:
+            ld = r.get("load")
+            if ld:
+                n_load += 1
+                for k in counters:
+                    counters[k] += ld["counters"].get(k, 0)
+        d["harness_counters_total_all_phases"] = counters
+        d["harness_phases_with_load"] = n_load
+        d["returned_to_baseline"] = {"yes": sum(1 for r in res + esl if r.get("settle", {}).get("returned_to_baseline")),
+                                     "of": len(res + esl)}
+        snaps = [s for p in P for s in p["esl_snapshots"]] + [s for r in esl for s in r["phase"]["esl_snapshots"]]
+        d["observed"] = {
+            "total_channels": agg([s["total_channels"] for s in snaps]),
+            "sessions_current": agg([s["sessions_current"] for s in snaps]),
+            "show_calls_rows": agg([s["show_calls_rows"] for s in snaps]),
+            "sessions_max": next((s["sessions_max"] for s in snaps if s.get("sessions_max")), None),
+        }
+        d["esl_commands"] = {}
+        names = [n for n, _, _ in QUERY_SERIES]
+        for n in names:
+            ser = [x for r in esl for x in r["phase"]["series"] if x["series"] == n]
+            if not ser:
+                continue
+            pooled = [v for x in ser for v in x["latency_ms_raw"]]
+            sizes = [x["response_bytes"]["mean"] for x in ser if x["response_bytes"]["mean"] is not None]
+            vals = [x["values"] for x in ser]
+            d["esl_commands"][n] = {
+                "command": ser[0]["command"], "runs": len(ser),
+                "ok": sum(x["ok"] for x in ser), "failed": sum(x["failed"] for x in ser),
+                "timeouts": sum(x["timeouts"] for x in ser),
+                "latency_ms_pooled": describe(pooled),
+                "median_of_run_medians_ms": agg([x["latency_ms"]["median"] for x in ser]),
+                "response_bytes_mean": sum(sizes) / len(sizes) if sizes else None,
+                "value_min": min((v["min"] for v in vals if v["min"] is not None), default=None),
+                "value_max": max((v["max"] for v in vals if v["max"] is not None), default=None),
+                "sample_response_head": ser[0]["sample_response_head"],
+            }
+        # anomalies
+        for r in res + esl:
+            p = r["phase"]
+            tag = "%s rep %s (%s)" % (p["scenario"], p["rep"], p["kind"])
+            ok_key = ("counts_as_expected_in_all_snapshots" if p["kind"] == "resources"
+                      else "counts_as_expected_before_and_after")
+            if not p["validation"][ok_key]:
+                out["anomalies"].append("%s: channel/test-leg counts differed from expected" % tag)
+            if not r.get("settle", {}).get("returned_to_baseline"):
+                out["anomalies"].append("%s: did not return to baseline" % tag)
+            ld = r.get("load")
+            if ld is not None and ld.get("exit_code") != 0:
+                out["anomalies"].append("%s: call harness exit code %s" % (tag, ld.get("exit_code")))
+            if p["kind"] == "esl":
+                for x in p["series"]:
+                    if x["failed"]:
+                        out["anomalies"].append("%s: %s had %d failed queries (%d timeouts)" % (tag, x["series"], x["failed"], x["timeouts"]))
+        out["scenarios"][sc] = d
+    return out
+
+
+SCENARIO_TITLES = {"idle": "Idle (0 calls)", "one": "One call", "five": "Five calls", "ten": "Ten calls"}
+
+
+def render_report(summary, run_meta):
+    env = summary["env"]
+    c, h = env.get("container", {}), env.get("host", {})
+    L = []
+    w = L.append
+    w("# FreeSWITCH resource and ESL baseline")
+    w("")
+    w("_Reference measurements for the later collector-enabled comparison. Laptop/VM loopback numbers: **not** production-scale and not an overhead guarantee._")
+    w("")
+    w("## Environment")
+    w("")
+    w("| Item | Value |")
+    w("|---|---|")
+    w("| Run id | %s |" % run_meta.get("run_id", "?"))
+    w("| Started / finished (UTC) | %s / %s |" % (run_meta.get("started", "?"), run_meta.get("finished", "?")))
+    w("| FreeSWITCH | %s |" % env.get("freeswitch_version"))
+    w("| FreeSWITCH config sha256 (%s files) | `%s` |" % (env.get("config_files"), (env.get("config_sha256") or "")[:16] + "…"))
+    for k in sorted(h):
+        w("| %s | %s |" % (k.replace("_", " "), h[k]))
+    w("| Container kernel / arch | %s / %s |" % (c.get("kernel"), c.get("machine")))
+    w("| CPUs visible to container | %s |" % c.get("cpu_count_visible"))
+    w("| VM memory visible (MiB) | %s |" % fmt(c.get("vm_mem_total_mib"), 0))
+    w("| cgroup cpu.max / memory.max | %s / %s (`max` = no limit) |" % (c.get("cgroup_cpu_max"), c.get("cgroup_memory_max")))
+    w("| `sessions-max` (FreeSWITCH) | %s |" % env.get("sessions_max"))
+    w("| Loadavg at start (1/5/15 min, VM) | %s |" % " ".join(c.get("loadavg") or []))
+    w("")
+    w("## Methodology")
+    w("")
+    m = run_meta
+    for line in [
+        "Scenarios: %s; %s repetition(s) each, in the same fixed order every repetition, same container, image, config and settings throughout." % (
+            m.get("scenarios", "?"), m.get("reps", "?")),
+        "Each scenario/repetition runs two separate phases so that benchmark queries do not perturb the resource measurement:",
+        "**Resource phase** – start the bounded call harness (hold %ss), wait until exactly 4×N channels exist, warm up %ss, then sample "
+        "`/proc` and cgroup counters every %ss for a %ss window with **no ESL polling** (only three small ESL snapshots at start/middle/end)." % (
+            m.get("hold_resources", "?"), m.get("warmup", "?"), m.get("interval", "1"), m.get("window", "?")),
+        "**ESL phase** – start a second identical load (hold %ss), warm up, then run five query series **sequentially** (one client at a time), "
+        "%s queries each at %s queries/s on a fixed schedule." % (m.get("hold_esl", "?"), m.get("queries", "?"), m.get("rate", "?")),
+        "After each phase the harness must finish, channels must return to 0 (`settle`), and the container must still be healthy; "
+        "otherwise the run aborts. Measurements start only after FreeSWITCH has been up ≥ 60 s.",
+        "Calls are the existing safe harness only (loopback, ≤ 10 concurrent here, hold ≤ 60 s). Safety limits were not changed.",
+        "All durations/latencies use `time.monotonic()`; UTC timestamps are labels only. Raw readings and latencies are stored in the JSON files.",
+    ]:
+        w("- " + line)
+    w("")
+    w("CPU % is in units of one core (100 % = one fully busy core): delta of the cumulative counter ÷ elapsed monotonic seconds. "
+      "\"Window avg\" is total delta over the whole window; \"peak\" is the largest single-sample-interval value (an instantaneous-style figure at the "
+      "sampling interval). Memory \"working set\" = cgroup `memory.current` − `inactive_file` (Docker's definition); "
+      "`memory.current` includes page cache; \"FreeSWITCH RSS\" is the process resident set, a different quantity.")
+    w("")
+    w("## Results by scenario")
+    w("")
+    for sc, d in summary["scenarios"].items():
+        r = d["resources"]
+        w("### %s" % SCENARIO_TITLES.get(sc, sc))
+        w("")
+        w("Expected channels %d (= 4 per call). Resource phases: %d, ESL phases: %d. Returned to baseline: %d of %d phases." % (
+            d["expected_channels"], d["runs_resources"], d["runs_esl"], d["returned_to_baseline"]["yes"], d["returned_to_baseline"]["of"]))
+        w("")
+        w("| Metric (mean ± stdev across repetitions) | Value |")
+        w("|---|---|")
+        rows = [("Container CPU, window avg (% of 1 core)", "container_cpu_avg_pct"),
+                ("Container CPU, peak 1 s interval (%)", "container_cpu_peak_pct"),
+                ("FreeSWITCH process CPU, window avg (%)", "freeswitch_cpu_avg_pct"),
+                ("FreeSWITCH process CPU, peak 1 s interval (%)", "freeswitch_cpu_peak_pct"),
+                ("Container working set, mean (MiB)", "container_working_set_mean_mib"),
+                ("Container working set, peak (MiB)", "container_working_set_peak_mib"),
+                ("Container `memory.current`, peak (MiB)", "container_memory_current_peak_mib"),
+                ("FreeSWITCH RSS, mean (MiB)", "freeswitch_rss_mean_mib"),
+                ("FreeSWITCH RSS, peak (MiB)", "freeswitch_rss_peak_mib"),
+                ("FreeSWITCH threads, peak", "freeswitch_threads_peak"),
+                ("FreeSWITCH open fds, peak", "freeswitch_open_fds_peak")]
+        for label, key in rows:
+            w("| %s | %s |" % (label, fmt_agg(r[key], 1 if "mib" in key or "threads" in key or "fds" in key else 2)))
+        o = d["observed"]
+        w("| Observed `total_channels` (ESL snapshots) | %s |" % fmt_agg(o["total_channels"], 1))
+        w("| Observed `sessions_current` (status) | %s |" % fmt_agg(o["sessions_current"], 1))
+        w("| Observed `show calls` rows | %s |" % fmt_agg(o["show_calls_rows"], 1))
+        k = d["harness_counters_total_all_phases"]
+        w("| Harness counters, all phases (initiated / answered / completed / timed out / failed) | %d / %d / %d / %d / %d |" % (
+            k["initiated"], k["answered"], k["completed"], k["timed_out"], k["failed"]))
+        w("")
+    w("### Per-run detail")
+    w("")
+    w("| Scenario | Rep | Phase | Window s | Container CPU avg % | FS CPU avg % | Working set MiB (mean) | FS RSS MiB (mean) | Channels (start/mid/end) | Sessions | Calls rows | Baseline |")
+    w("|---|---|---|---|---|---|---|---|---|---|---|---|")
+    for r in summary.get("_runs", []):
+        p = r["phase"]
+        if p["kind"] != "resources":
+            continue
+        s = p["esl_snapshots"]
+        w("| %s | %s | resources | %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
+            p["scenario"], p["rep"], fmt(p["window_actual_s"], 1),
+            fmt(p["cpu_pct_of_one_core"]["container_window_avg"]), fmt(p["cpu_pct_of_one_core"]["freeswitch_window_avg"]),
+            fmt(p["memory_mib"]["container_working_set"]["mean"], 1), fmt(p["memory_mib"]["freeswitch_process_rss"]["mean"], 1),
+            "/".join(str(x["total_channels"]) for x in s), "/".join(str(x["sessions_current"]) for x in s),
+            "/".join(str(x["show_calls_rows"]) for x in s),
+            "yes" if r.get("settle", {}).get("returned_to_baseline") else "NO"))
+    w("")
+    w("## ESL command latency")
+    w("")
+    w("Sequential queries (one benchmark client), fixed schedule, per-query timeout %.0f s. Persistent authenticated connection "
+      "except `status_new_connection` (connect + auth + query + close each time). Latency is round-trip ms on loopback "
+      "inside the container. p95 is shown only when the pooled sample count is ≥ 20." % ESL_TIMEOUT_S)
+    w("")
+    for sc, d in summary["scenarios"].items():
+        if not d["esl_commands"]:
+            continue
+        w("### %s" % SCENARIO_TITLES.get(sc, sc))
+        w("")
+        w("| Series | OK | Failed (timeouts) | Mean ms | Median ms | p95 ms | Max ms | Response bytes | Value min–max |")
+        w("|---|---|---|---|---|---|---|---|---|")
+        for n, e in d["esl_commands"].items():
+            L_ = e["latency_ms_pooled"]
+            w("| `%s` | %d | %d (%d) | %s | %s | %s | %s | %s | %s–%s |" % (
+                e["command"] + (" (new conn.)" if n.endswith("new_connection") else ""), e["ok"], e["failed"], e["timeouts"],
+                fmt(L_["mean"], 3), fmt(L_["median"], 3), fmt(L_["p95"], 3), fmt(L_["max"], 3),
+                fmt(e["response_bytes_mean"], 0), e["value_min"], e["value_max"]))
+        w("")
+    w("### Response formats observed")
+    w("")
+    any_sc = next((d for d in summary["scenarios"].values() if d["esl_commands"]), None)
+    if any_sc:
+        for n, e in any_sc["esl_commands"].items():
+            if n.endswith("new_connection"):
+                continue
+            head = (e["sample_response_head"] or "").strip().replace("\n", " ⏎ ")
+            w("- `%s`: `%s`" % (e["command"], head[:140]))
+    w("")
+    w("## Validation of call, channel and session counts")
+    w("")
+    for sc, d in summary["scenarios"].items():
+        o = d["observed"]
+        ch, ss, cr = o["total_channels"], o["sessions_current"], o["show_calls_rows"]
+        ok = ch and ch["min"] == ch["max"] == d["expected_channels"]
+        w("- **%s**: expected %d channels; observed min–max %s–%s → %s. Sessions current %s–%s (sessions max %s). `show calls` rows %s–%s%s." % (
+            sc, d["expected_channels"], ch and ch["min"], ch and ch["max"], "OK" if ok else "MISMATCH",
+            ss and ss["min"], ss and ss["max"], o["sessions_max"], cr and cr["min"], cr and cr["max"],
+            "" if d["calls"] == 0 else " (%.1f rows per call; FreeSWITCH's row semantics, not a call count)" % ((cr["mean"] / d["calls"]) if cr else 0)))
+    w("")
+    w("## Failures and anomalies")
+    w("")
+    if summary["anomalies"]:
+        for a in summary["anomalies"]:
+            w("- " + a)
+    else:
+        w("None recorded: every phase reached its expected channel count, returned to baseline, and every ESL query succeeded.")
+    w("")
+    w("## Interpretation")
+    w("")
+    cmds = {}
+    order = list(summary["scenarios"].keys())
+    for sc, d in summary["scenarios"].items():
+        for n, e in d["esl_commands"].items():
+            cmds.setdefault(n, {})[sc] = e
+    total_fail = 0
+    flagged = []
+    for n, per in cmds.items():
+        scs = [sc for sc in order if sc in per]
+        meds = {sc: per[sc]["latency_ms_pooled"]["median"] for sc in scs}
+        p95s = {sc: per[sc]["latency_ms_pooled"]["p95"] for sc in scs}
+        maxs = {sc: per[sc]["latency_ms_pooled"]["max"] for sc in scs}
+        fails = sum(per[sc]["failed"] for sc in scs)
+        total_fail += fails
+        base, top = meds[scs[0]], meds[scs[-1]]
+        ratio = (top / base) if base else None
+        note = []
+        if fails:
+            note.append("%d failed queries" % fails)
+        if ratio is not None and ratio > 2.0:
+            note.append("median latency %.1fx higher at %s than %s" % (ratio, scs[-1], scs[0]))
+        if n.endswith("new_connection"):
+            note.append("includes TCP connect + ESL auth per query")
+        if n == "show_calls_count":
+            note.append("row count is not a call count (see validation)")
+        if fails or (ratio is not None and ratio > 2.0):
+            flagged.append(per[scs[0]]["command"])
+        w("- `%s`: median ms by scenario: %s; worst p95 %s ms; worst max %s ms; %d failures.%s" % (
+            per[scs[0]]["command"], ", ".join("%s %s" % (sc, fmt(meds[sc], 2)) for sc in scs),
+            fmt(max([v for v in p95s.values() if v is not None], default=None), 2),
+            fmt(max([v for v in maxs.values() if v is not None], default=None), 2), fails,
+            (" Note: " + "; ".join(note) + ".") if note else ""))
+    w("")
+    drift = []
+    idle_runs = sorted((r["phase"] for r in summary.get("_runs", [])
+                        if r["phase"]["kind"] == "resources" and r["phase"]["calls"] == 0), key=lambda p: p["rep"])
+    if len(idle_runs) >= 2:
+        rss = [p["memory_mib"]["freeswitch_process_rss"]["mean"] for p in idle_runs]
+        ws = [p["memory_mib"]["container_working_set"]["mean"] for p in idle_runs]
+        w("- **Order effect (idle memory by repetition)**: FreeSWITCH RSS mean %s MiB; container working set mean %s MiB. %s" % (
+            " → ".join(fmt(v, 1) for v in rss), " → ".join(fmt(v, 1) for v in ws),
+            "Idle memory rose after earlier call loads and was not released within the run, so idle values depend on what ran before "
+            "them; compare idle repetition 1 (fresh process) separately from later repetitions." if rss[-1] > rss[0] * 1.2 else
+            "No material growth across repetitions."))
+        w("")
+    w("**Reading these numbers.** In this lab (one local client, 2 queries/s, at most 40 channels, loopback) the four lightweight commands "
+      "answered in about a millisecond or a few milliseconds with %s. They are therefore reasonable *candidates* for periodic, low-rate polling, "
+      "to be confirmed by the collector-enabled comparison. %s" % (
+          "no failures or timeouts" if total_fail == 0 else "%d failed queries (see above)" % total_fail,
+          ("Flagged for further investigation: %s." % ", ".join("`%s`" % c for c in flagged)) if flagged
+          else "No command was flagged by the simple rules used here (failures, or median latency > 2x from idle to the highest load)."))
+    w("")
+    w("These figures do **not** establish production overhead: the test used a single client, tiny channel counts, and loopback only. "
+      "`show channels` and `show calls` *listings* (rows per channel/call) were deliberately not benchmarked and need separate "
+      "investigation at realistic channel counts. A new connection per query (`status (new conn.)`) costs several times a "
+      "persistent-connection query, so a collector should hold a connection if it polls frequently.")
+    w("")
+    w("## Known limitations and unverified assumptions")
+    w("")
+    for line in [
+        "One host, one Docker Desktop VM (shared with the user's other workloads); background activity can add noise. Loadavg is recorded, not controlled.",
+        "Loopback calls carry no SIP/RTP/codec work; they measure channel, bridge and dialplan cost only. Not representative of production call mixes.",
+        "CPU of the container includes the measurement helpers themselves (a 1 Hz /proc reader; ESL snapshots). It is small but not zero and is the same in every scenario.",
+        "Sampling is at 1 s granularity; \"peak\" is the maximum over 1 s intervals, not a true instantaneous maximum.",
+        "`memory.current` includes reclaimable page cache; the working set subtracts `inactive_file` only. FreeSWITCH RSS and container memory are different quantities.",
+        "ESL latency is measured over container loopback with a Python client; it excludes network transit and the cost of a real monitoring client (e.g. the Datadog Agent).",
+        "The 15–20 query series is small: p95 is shown only with ≥ 20 pooled samples, and the max is a single observation.",
+        "No CPU/memory limits are set on the container, so behaviour under throttling or OOM pressure is unmeasured.",
+        "`show calls` row counts are FreeSWITCH-internal rows (3 per bridged loopback test call here) and were not converted into calls.",
+        "Only the four requested lightweight commands (plus a new-connection variant of `status`) were benchmarked; `show channels`/`show calls` listings were not.",
+        "Linux/amd64 and native Linux Docker hosts are untested.",
+    ]:
+        w("- " + line)
+    w("")
+    return "\n".join(L)
+
+
+# ---------------------------------------------------------------- CLI
+def main(argv):
+    p = argparse.ArgumentParser(prog="esl-baseline")
+    sub = p.add_subparsers(dest="cmd")
+
+    def common(sp):
+        sp.add_argument("--scenario", required=True)
+        sp.add_argument("--rep", type=int, required=True)
+        sp.add_argument("--calls", type=int, required=True)
+        sp.add_argument("--warmup", type=float, default=8)
+
+    e = sub.add_parser("env")
+    e.add_argument("--fact", action="append")
+    r = sub.add_parser("resources")
+    common(r)
+    r.add_argument("--window", type=float, default=25)
+    r.add_argument("--interval", type=float, default=1.0)
+    q = sub.add_parser("esl")
+    common(q)
+    q.add_argument("--queries", type=int, default=15)
+    q.add_argument("--rate", type=float, default=2.0)
+    s = sub.add_parser("settle")
+    s.add_argument("--timeout", type=float, default=30)
+    rp = sub.add_parser("report")
+    rp.add_argument("--json", action="store_true")
+    rp.add_argument("--run-meta", default="{}")
+    try:
+        a = p.parse_args(argv)
+    except SystemExit as exc:
+        return 4 if exc.code else 0
+    if a.cmd is None:
+        p.print_usage(sys.stderr)
+        return 4
+    try:
+        if a.cmd in ("resources", "esl"):
+            if not (0 <= a.calls <= 10) or not (0 <= a.warmup <= 60) or not (1 <= a.rep <= 50):
+                raise Fail(4, "--calls 0..10, --warmup 0..60, --rep 1..50")
+            if a.cmd == "resources":
+                if not (5 <= a.window <= 120) or not (0.5 <= a.interval <= 10):
+                    raise Fail(4, "--window 5..120, --interval 0.5..10")
+                out = phase_resources(a)
+            else:
+                if not (5 <= a.queries <= 100) or not (0.2 <= a.rate <= MAX_RATE):
+                    raise Fail(4, "--queries 5..100, --rate 0.2..%s" % MAX_RATE)
+                out = phase_esl(a)
+        elif a.cmd == "env":
+            out = phase_env(a)
+        elif a.cmd == "settle":
+            out = phase_settle(a)
+        else:
+            records = [json.loads(l) for l in sys.stdin if l.strip()]
+            summary = build_summary(records)
+            summary["_runs"] = [r for r in records if r.get("kind") != "env"]
+            meta = json.loads(a.run_meta)
+            if a.json:
+                s_out = dict(summary)
+                s_out.pop("_runs")
+                print(json.dumps(s_out, indent=2))
+            else:
+                print(render_report(summary, meta))
+            return 0
+        print(json.dumps(out, separators=(",", ":")))
+        return 0
+    except Fail as exc:
+        sys.stderr.write("esl-baseline: %s\n" % exc.message)
+        return exc.code if exc.code in (2, 3, 4) else 1
+    except Exception as exc:        # never include str(exc)
+        sys.stderr.write("esl-baseline: unexpected %s\n" % type(exc).__name__)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
