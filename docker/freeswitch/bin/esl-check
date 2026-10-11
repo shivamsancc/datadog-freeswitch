@@ -1,0 +1,178 @@
+#!/usr/bin/env python3
+"""Minimal FreeSWITCH Event Socket health/command client (stdlib only).
+
+Authenticates, runs one `api` command, prints its output, exits.
+The password is read from a file or an environment variable, never from argv,
+and is never printed or placed in an error message.
+
+Exit codes: 0 ok | 1 command/health check failed | 2 authentication rejected
+            3 connection error or timeout | 4 usage/configuration error
+"""
+import os
+import socket
+import sys
+import time
+
+MAX_HEADER_BYTES = 8192
+MAX_BODY_BYTES = 1 << 20
+USAGE = (
+    "usage: esl-check [--host H] [--port P] [--timeout S] [--command CMD] [--expect PREFIX]\n"
+    "                 [--password-file PATH | --password-env NAME]\n"
+    "  defaults: host 127.0.0.1, port 8021, timeout 5, command 'status'; password from\n"
+    "  --password-file, else --password-env NAME, else $ESL_PASSWORD_FILE, else $ESL_PASSWORD.\n"
+)
+
+
+class Fail(Exception):
+    """Carries a fixed, secret-free message and an exit code."""
+
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def parse_args(argv):
+    opts = {"host": "127.0.0.1", "port": "8021", "timeout": "5", "command": "status",
+            "expect": None, "password-file": None, "password-env": None}
+    it = iter(argv)
+    for arg in it:
+        key = arg[2:] if arg.startswith("--") else None
+        if key not in opts:
+            raise Fail(4, "unknown or malformed option\n" + USAGE)
+        try:
+            opts[key] = next(it)
+        except StopIteration:
+            raise Fail(4, "missing value for --%s" % key)
+    try:
+        opts["port"] = int(opts["port"])
+        opts["timeout"] = float(opts["timeout"])
+    except ValueError:
+        raise Fail(4, "--port and --timeout must be numeric")
+    if not (0 < opts["port"] < 65536) or opts["timeout"] <= 0:
+        raise Fail(4, "--port or --timeout out of range")
+    return opts
+
+
+def load_password(opts):
+    # Explicit options win over the environment default.
+    path = opts["password-file"]
+    if not path and not opts["password-env"]:
+        path = os.environ.get("ESL_PASSWORD_FILE")
+    if path:
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                value = fh.read().strip()
+        except OSError:
+            raise Fail(4, "cannot read password file")
+    else:
+        value = os.environ.get(opts["password-env"] or "ESL_PASSWORD", "")
+    if not value:
+        raise Fail(4, "no ESL password configured")
+    if "\n" in value or "\r" in value:
+        raise Fail(4, "ESL password must be a single line")
+    return value
+
+
+class Esl:
+    def __init__(self, sock, deadline):
+        self.sock = sock
+        self.deadline = deadline
+        self.buf = b""
+
+    def _fill(self):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise Fail(3, "timed out")
+        self.sock.settimeout(remaining)
+        try:
+            chunk = self.sock.recv(4096)
+        except socket.timeout:
+            raise Fail(3, "timed out")
+        except OSError:
+            raise Fail(3, "connection error")
+        if not chunk:
+            raise Fail(3, "connection closed by server")
+        self.buf += chunk
+
+    def read_message(self):
+        """Return (headers dict, body bytes) for one ESL message."""
+        while b"\n\n" not in self.buf:
+            if len(self.buf) > MAX_HEADER_BYTES:
+                raise Fail(1, "oversized header")
+            self._fill()
+        raw, self.buf = self.buf.split(b"\n\n", 1)
+        headers = {}
+        for line in raw.decode("utf-8", "replace").split("\n"):
+            name, _, value = line.partition(":")
+            headers[name.strip().lower()] = value.strip()
+        try:
+            length = int(headers.get("content-length", "0"))
+        except ValueError:
+            raise Fail(1, "bad Content-Length")
+        if length < 0 or length > MAX_BODY_BYTES:
+            raise Fail(1, "unreasonable Content-Length")
+        while len(self.buf) < length:
+            self._fill()
+        body, self.buf = self.buf[:length], self.buf[length:]
+        return headers, body
+
+    def send(self, text):
+        try:
+            self.sock.settimeout(max(self.deadline - time.monotonic(), 0.001))
+            self.sock.sendall(text.encode("utf-8") + b"\n\n")
+        except OSError:
+            raise Fail(3, "connection error")
+
+
+def run(opts):
+    password = load_password(opts)
+    command = opts["command"]
+    if "\n" in command or "\r" in command:
+        raise Fail(4, "command must be a single line")
+    deadline = time.monotonic() + opts["timeout"]
+    try:
+        sock = socket.create_connection((opts["host"], opts["port"]), timeout=opts["timeout"])
+    except OSError:
+        raise Fail(3, "cannot connect to %s:%d" % (opts["host"], opts["port"]))
+    try:
+        esl = Esl(sock, deadline)
+        headers, _ = esl.read_message()
+        if headers.get("content-type") != "auth/request":
+            raise Fail(1, "unexpected greeting from server")
+        esl.send("auth " + password)
+        headers, _ = esl.read_message()
+        if not headers.get("reply-text", "").startswith("+OK"):
+            raise Fail(2, "authentication rejected")
+        esl.send("api " + command)
+        headers, body = esl.read_message()
+        if headers.get("content-type") != "api/response":
+            raise Fail(1, "unexpected response type")
+        text = body.decode("utf-8", "replace")
+        if text.startswith("-ERR"):
+            raise Fail(1, "command failed: " + text.strip()[:200])
+        if opts["expect"] is not None and not text.startswith(opts["expect"]):
+            raise Fail(1, "response did not start with the expected prefix")
+        sys.stdout.write(text if text.endswith("\n") else text + "\n")
+        try:
+            esl.send("exit")
+        except Fail:
+            pass
+    finally:
+        sock.close()
+
+
+def main():
+    try:
+        run(parse_args(sys.argv[1:]))
+    except Fail as exc:
+        sys.stderr.write("esl-check: %s\n" % exc.message)
+        return exc.code
+    except Exception as exc:  # never include str(exc): it could echo input
+        sys.stderr.write("esl-check: unexpected %s\n" % type(exc).__name__)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

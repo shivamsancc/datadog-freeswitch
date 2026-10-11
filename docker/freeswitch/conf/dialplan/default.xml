@@ -1,0 +1,19 @@
+<include>
+  <context name="default">
+    <!-- Local-only test extensions; reachable via fs_cli/ESL originate, no carrier involved. -->
+    <extension name="lab_tone">
+      <condition field="destination_number" expression="^9197$">
+        <action application="answer"/>
+        <action application="playback" data="tone_stream://%(2000,0,440)"/>
+        <action application="hangup"/>
+      </condition>
+    </extension>
+    <extension name="lab_sleep">
+      <condition field="destination_number" expression="^9198$">
+        <action application="answer"/>
+        <action application="sleep" data="10000"/>
+        <action application="hangup"/>
+      </condition>
+    </extension>
+  </context>
+</include>

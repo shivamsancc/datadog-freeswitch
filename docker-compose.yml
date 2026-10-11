@@ -1,0 +1,49 @@
+name: datadog-freeswitch
+
+services:
+  freeswitch:
+    build:
+      context: docker/freeswitch
+      args:
+        FS_VERSION: "1.10.12"
+    image: datadog-freeswitch-lab/freeswitch:1.10.12
+    init: true
+    restart: unless-stopped
+    environment:
+      # Path only (not a secret). The password itself is the file secret below.
+      ESL_PASSWORD_FILE: /run/secrets/esl_password
+      LAB_SUBNET: ${LAB_SUBNET:-172.29.77.0/24}
+    secrets:
+      - esl_password
+    volumes:
+      - ./docker/freeswitch/conf:/usr/local/freeswitch/conf:ro
+      - freeswitch-log:/usr/local/freeswitch/log
+      - freeswitch-db:/usr/local/freeswitch/db
+    ports:
+      # SIP + RTP only, bound to loopback by default. ESL (8021) is deliberately NOT published.
+      - "${HOST_BIND_ADDR:-127.0.0.1}:5060:5060/udp"
+      - "${HOST_BIND_ADDR:-127.0.0.1}:5060:5060/tcp"
+      - "${HOST_BIND_ADDR:-127.0.0.1}:16384-16483:16384-16483/udp"
+    networks:
+      - lab
+    healthcheck:
+      test: ["CMD", "esl-check", "--timeout", "4", "--expect", "UP"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+secrets:
+  esl_password:
+    file: ./secrets/esl_password
+
+networks:
+  lab:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${LAB_SUBNET:-172.29.77.0/24}
+
+volumes:
+  freeswitch-log:
+  freeswitch-db:

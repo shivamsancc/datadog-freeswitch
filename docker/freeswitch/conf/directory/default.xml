@@ -1,0 +1,7 @@
+<include>
+  <!-- Intentionally empty: no SIP users, no default passwords. Add users here in a later milestone. -->
+  <domain name="$${domain}">
+    <users>
+    </users>
+  </domain>
+</include>

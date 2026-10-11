@@ -1,0 +1,6 @@
+.git
+.env
+secrets
+README.md
+tests
+scripts
