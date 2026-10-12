@@ -20,6 +20,7 @@ from datadog_checks.freeswitch.esl import EslClient
 from .conftest import FAST_TIMEOUTS, SENTINEL_PASSWORD
 from .fake_esl import (
     DISCONNECT,
+    STATUS_1_10_12,
     FakeEslServer,
     api_response,
     command_reply,
@@ -34,6 +35,21 @@ ALL_METRICS = [
     'freeswitch.channels.active',
     'freeswitch.collection.duration',
     'freeswitch.collection.errors',
+    'freeswitch.sessions.limit',
+    'freeswitch.sessions.created',
+    'freeswitch.sessions.active',
+    'freeswitch.sessions.peak',
+    'freeswitch.sessions.rate.limit',
+    'freeswitch.registrations',
+    'freeswitch.calls.bridged',
+]
+
+# Default configuration: `show bridged_calls count` is only sent when `collect_bridged_calls` is enabled.
+EXPECTED_API_LINES = [
+    'api uptime s',
+    'api show channels count',
+    'api show status',
+    'api show registrations count',
 ]
 
 MakeServer = Callable[..., FakeEslServer]
@@ -99,12 +115,27 @@ def test_success_metrics_and_wire(
     aggregator.assert_metric('freeswitch.channels.active', 4, tags=tags, count=1, metric_type=aggregator.GAUGE)
     aggregator.assert_metric('freeswitch.collection.errors', 0, tags=tags, count=1, metric_type=aggregator.COUNT)
     aggregator.assert_metric('freeswitch.collection.duration', tags=tags, count=1, metric_type=aggregator.GAUGE)
+    aggregator.assert_metric('freeswitch.sessions.limit', 200, tags=tags, count=1, metric_type=aggregator.GAUGE)
+    aggregator.assert_metric(
+        'freeswitch.sessions.created', 4, tags=tags, count=1, metric_type=aggregator.MONOTONIC_COUNT
+    )
+    aggregator.assert_metric('freeswitch.sessions.active', 0, tags=tags, count=1, metric_type=aggregator.GAUGE)
+    aggregator.assert_metric('freeswitch.sessions.peak', 4, tags=tags, count=1, metric_type=aggregator.GAUGE)
+    aggregator.assert_metric('freeswitch.sessions.rate.limit', 30, tags=tags, count=1, metric_type=aggregator.GAUGE)
+    aggregator.assert_metric('freeswitch.registrations', 1, tags=tags, count=1, metric_type=aggregator.GAUGE)
+    aggregator.assert_metric('freeswitch.calls.bridged', count=0)  # opt-in, off by default
     aggregator.assert_all_metrics_covered()
     aggregator.assert_metrics_using_metadata(get_metadata_metrics())
 
     duration = aggregator.metrics('freeswitch.collection.duration')[0].value
     assert 0 <= duration < 5
-    assert server.lines == ['auth ' + SENTINEL_PASSWORD, 'api uptime s', 'api show channels count']
+    assert server.lines == [
+        'auth ' + SENTINEL_PASSWORD,
+        'api uptime s',
+        'api show channels count',
+        'api show status',
+        'api show registrations count',
+    ]
 
 
 def test_connection_reuse_across_runs(
@@ -116,7 +147,7 @@ def test_connection_reuse_across_runs(
         dd_run_check(check)
 
     assert server.connections == 1
-    assert server.api_lines == ['api uptime s', 'api show channels count'] * 5
+    assert server.api_lines == EXPECTED_API_LINES * 5
     aggregator.assert_metric('freeswitch.can_connect', 1, count=5)
     aggregator.assert_metric('freeswitch.collection.errors', 0, count=5)
 
@@ -468,7 +499,7 @@ def test_connection_that_dies_mid_exchange_is_replaced_in_the_same_run(
     def on_api(conn: Any, srv: FakeEslServer, cmd: str) -> bool:
         state['calls'] += 1
         # First connection: answer the first run, then drop on the next command without a prior FIN.
-        if state['calls'] == 3 and srv.connections == 1:
+        if state['calls'] == 5 and srv.connections == 1:
             return False
         conn.send(api_response(srv.responses[cmd]))
         return True
@@ -871,6 +902,24 @@ DISALLOWED = [
     'uptime s\r\n\r\napi hupall',
     'show channels count\n\nexit',
     '',
+    # near misses of the third allowed command, and the commands that stay outside the allowlist
+    'show status ',
+    ' show status',
+    'SHOW STATUS',
+    'show  status',
+    'show status\nstatus',
+    'show status\r\n\r\napi hupall',
+    'show status count',
+    'show status as json',
+    'version',
+    'version short',
+    'show calls count',
+    'show registrations',
+    'show bridged_calls',
+    'show channels',
+    'show detailed_calls count',
+    'sofia status',
+    'sofia_count_reg',
 ]
 
 
@@ -887,8 +936,14 @@ def test_client_rejects_commands_outside_the_allowlist(command: str, make_server
     client.close()
 
 
-def test_allowlist_is_exactly_two_commands() -> None:
-    assert esl.ALLOWED_COMMANDS == {'uptime s', 'show channels count'}
+def test_allowlist_is_exactly_five_commands() -> None:
+    assert esl.ALLOWED_COMMANDS == {
+        'uptime s',
+        'show channels count',
+        'show status',
+        'show registrations count',
+        'show bridged_calls count',
+    }
 
 
 def test_only_expected_lines_reach_the_server_over_many_runs(
@@ -898,7 +953,7 @@ def test_only_expected_lines_reach_the_server_over_many_runs(
     check = make_check(server)
     for _ in range(10):
         dd_run_check(check)
-    assert set(server.lines) == {'auth ' + SENTINEL_PASSWORD, 'api uptime s', 'api show channels count'}
+    assert set(server.lines) == {'auth ' + SENTINEL_PASSWORD, *EXPECTED_API_LINES}
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -1058,7 +1113,7 @@ def test_repeated_runs_use_bounded_resources(
         dd_run_check(check)
 
     assert server.connections == 1
-    assert len(server.api_lines) == 400
+    assert len(server.api_lines) == 800
     assert set(threading.enumerate()) == threads_before
     assert check._client is not None and check._client._buf == b''
     tag_sets = {tuple(sorted(s.tags)) for name in ALL_METRICS for s in aggregator.metrics(name)}
@@ -1074,3 +1129,266 @@ def test_closed_client_does_not_leak_sockets(make_server: MakeServer) -> None:
         client.close()
         assert not client.connected
     assert client._sock is None
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Capacity metrics from `show status`: freeswitch.sessions.limit and freeswitch.sessions.created
+# ---------------------------------------------------------------------------------------------------------
+
+# Real 1.10.12 capture text (see fake_esl.STATUS_1_10_12). Everything else below is SYNTHETIC.
+REAL_STATUS = STATUS_1_10_12
+
+
+def _cl(status: esl.StatusFields) -> tuple[int, int]:
+    return status.created, status.limit
+
+
+def test_parse_status_real_capture() -> None:
+    assert _cl(esl.parse_status(REAL_STATUS)) == (4, 200)
+
+
+@pytest.mark.parametrize(
+    'body',
+    [
+        b'',
+        b'\n',
+        b'UP 0 years\n',
+        b'4 session(s) since startup\n',  # limit missing
+        b'200 session(s) max\n',  # created missing
+        b'4 session(s) since startup\n4 session(s) since startup\n200 session(s) max\n',  # duplicate created
+        b'4 session(s) since startup\n200 session(s) max\n200 session(s) max\n',  # duplicate limit
+        b'4 session(s) since startup\n200 session(s) max\n300 session(s) max\n',  # conflicting limit
+        b'-4 session(s) since startup\n200 session(s) max\n',  # negative
+        b'4 session(s) since startup\n-200 session(s) max\n',
+        b'4.5 session(s) since startup\n200 session(s) max\n',  # non-integer
+        b'four session(s) since startup\n200 session(s) max\n',
+        b'4 session(s) since startup\nmany session(s) max\n',
+        b'0x10 session(s) since startup\n200 session(s) max\n',
+        b'+4 session(s) since startup\n200 session(s) max\n',
+        b' 4 x session(s) since startup\n200 session(s) max\n',  # a prefix on the line is not the field
+        b'4 session(s) since startup\n200 session(s) maxx\n',  # near miss of the suffix
+        b'4 session(s) since startup\n2OO session(s) max\n',
+        b'4 session(s) since startup\n\xff session(s) max\n',  # not UTF-8
+        b'\xd9\xa4 session(s) since startup\n200 session(s) max\n',  # Arabic-indic digit, not ASCII
+        b'4 session(s) since startup\n' + b'9' * 40 + b' session(s) max\n',  # absurdly long number
+        b'{"row_count":0}',
+        b'-ERR show status Command not found!\n',
+    ],
+)
+def test_parse_status_rejects_malformed(body: bytes) -> None:
+    with pytest.raises(esl.EslParseError) as exc:
+        esl.parse_status(body)
+    assert exc.value.error_type == 'parse'
+
+
+def test_parse_status_ignores_other_lines_but_not_lookalikes() -> None:
+    body = (
+        b'UP 0 years, 0 days, 0 hours, 1 minute, 2 seconds\n'
+        b'4 session(s) since startup\n'
+        b'0 session(s) - peak 40, last 5min 0 \n'
+        b'0 session(s) per Sec out of max 30, peak 4, last 5min 4\n'
+        b'200 session(s) max\n'
+    )
+    assert _cl(esl.parse_status(body)) == (4, 200)
+    # the rate line mentions "max 30" and must never be read as the limit
+    assert _cl(esl.parse_status(body.replace(b'200 session(s) max', b'7 session(s) max'))) == (4, 7)
+    # zero is a valid value
+    assert _cl(esl.parse_status(b'0 session(s) since startup\n0 session(s) max\n')) == (0, 0)
+
+
+def test_session_metrics_have_documented_types_and_values(
+    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
+) -> None:
+    server = make_server()
+    server.responses['show status'] = (
+        b'12 session(s) since startup\n0 session(s) - peak 3, last 5min 0\n50 session(s) max\n'
+    )
+    dd_run_check(make_check(server))
+    tags = tags_for(server)
+    aggregator.assert_metric('freeswitch.sessions.limit', 50, tags=tags, count=1, metric_type=aggregator.GAUGE)
+    aggregator.assert_metric(
+        'freeswitch.sessions.created', 12, tags=tags, count=1, metric_type=aggregator.MONOTONIC_COUNT
+    )
+    aggregator.assert_metric('freeswitch.sessions.active', 0, tags=tags, count=1, metric_type=aggregator.GAUGE)
+    aggregator.assert_metric('freeswitch.sessions.peak', 3, tags=tags, count=1, metric_type=aggregator.GAUGE)
+    aggregator.assert_metric('freeswitch.sessions.rate.limit', count=0)  # line absent in this body
+    aggregator.assert_metric('freeswitch.can_connect', 1, count=1)
+    aggregator.assert_metric('freeswitch.collection.errors', 0, count=1)
+    aggregator.assert_metrics_using_metadata(get_metadata_metrics())
+
+
+@pytest.mark.parametrize(
+    'answer, error_type',
+    [
+        ('malformed', 'parse'),
+        ('duplicate', 'parse'),
+        ('negative', 'parse'),
+        ('missing', 'parse'),
+        ('command_error', 'protocol'),  # an older or different FreeSWITCH that does not know the command
+        ('permission_denied', 'auth'),  # an account whose permissions do not include `show`
+        ('wrong_type', 'protocol'),
+        ('truncated_body', 'connect'),
+    ],
+)
+def test_status_failure_is_isolated_from_the_existing_metrics(
+    answer: str,
+    error_type: str,
+    make_server: MakeServer,
+    make_check: MakeCheck,
+    dd_run_check: Callable[..., None],
+    aggregator: AggregatorStub,
+) -> None:
+    replies = {
+        'malformed': api_response(b'many session(s) since startup\n200 session(s) max\n'),
+        'duplicate': api_response(b'4 session(s) since startup\n4 session(s) since startup\n200 session(s) max\n'),
+        'negative': api_response(b'-4 session(s) since startup\n200 session(s) max\n'),
+        'missing': api_response(b'UP 0 years\n'),
+        'command_error': api_response(b'-ERR show status Command not found!\n'),
+        'permission_denied': command_reply('-ERR permission denied'),
+        'wrong_type': command_reply('+OK something'),
+        'truncated_body': b'Content-Type: api/response\nContent-Length: 50\n\nshort',
+    }
+
+    def on_api(conn: Any, srv: FakeEslServer, cmd: str) -> bool:
+        if cmd == 'show status':
+            conn.send(replies[answer])
+            return False if answer == 'truncated_body' else True
+        conn.send(api_response(srv.responses[cmd]))
+        return True
+
+    server = make_server(make_handler(on_api=on_api))
+    dd_run_check(make_check(server))
+
+    tags = tags_for(server)
+    # the samples that were already collected survive, and the connection is still reported as available
+    aggregator.assert_metric('freeswitch.can_connect', 1, tags=tags, count=1)
+    aggregator.assert_metric('freeswitch.uptime', 3401, tags=tags, count=1)
+    aggregator.assert_metric('freeswitch.channels.active', 4, tags=tags, count=1)
+    # nothing is fabricated for the failed query: no zero, no stale value
+    aggregator.assert_metric('freeswitch.sessions.limit', count=0)
+    aggregator.assert_metric('freeswitch.sessions.created', count=0)
+    # the failure is reported through the existing bounded error_type
+    aggregator.assert_metric(
+        'freeswitch.collection.errors',
+        1,
+        tags=tags_for(server, 'error_type:' + error_type),
+        count=1,
+        metric_type=aggregator.COUNT,
+    )
+    assert error_type in esl.ERROR_TYPES
+    aggregator.assert_metric('freeswitch.collection.duration', count=1)
+    aggregator.assert_metrics_using_metadata(get_metadata_metrics())
+
+
+def test_no_stale_capacity_after_a_failed_status_run_and_recovery(
+    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
+) -> None:
+    server = make_server()
+    check = make_check(server)
+    dd_run_check(check)
+    server.responses['show status'] = b'garbage\n'
+    dd_run_check(check)
+    server.responses['show status'] = b'7 session(s) since startup\n80 session(s) max\n'
+    dd_run_check(check)
+    assert [m.value for m in aggregator.metrics('freeswitch.sessions.limit')] == [200, 80]
+    assert [m.value for m in aggregator.metrics('freeswitch.sessions.created')] == [4, 7]
+    aggregator.assert_metric('freeswitch.can_connect', 1, count=3)
+    errors = aggregator.metrics('freeswitch.collection.errors')
+    assert [m.value for m in errors] == [0, 1, 0]
+
+
+def test_status_query_that_stalls_is_a_bounded_timeout_that_keeps_the_other_metrics(
+    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
+) -> None:
+    def on_api(conn: Any, srv: FakeEslServer, cmd: str) -> bool:
+        if cmd == 'show status':
+            conn.wait_closed()
+            return False
+        conn.send(api_response(srv.responses[cmd]))
+        return True
+
+    server = make_server(make_handler(on_api=on_api))
+    start = time.monotonic()
+    dd_run_check(make_check(server, **FAST_TIMEOUTS))
+    assert time.monotonic() - start < 2
+    tags = tags_for(server)
+    aggregator.assert_metric('freeswitch.can_connect', 1, tags=tags, count=1)
+    aggregator.assert_metric('freeswitch.uptime', 3401, tags=tags, count=1)
+    aggregator.assert_metric('freeswitch.channels.active', 4, tags=tags, count=1)
+    aggregator.assert_metric('freeswitch.collection.errors', 1, tags=tags_for(server, 'error_type:timeout'), count=1)
+    aggregator.assert_metric('freeswitch.sessions.limit', count=0)
+
+
+def test_required_query_failure_still_fails_the_run_before_the_status_query(
+    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
+) -> None:
+    server = make_server()
+    server.responses['show channels count'] = b'garbage\n'
+    dd_run_check(make_check(server))
+    aggregator.assert_metric('freeswitch.can_connect', 0, count=1)
+    aggregator.assert_metric('freeswitch.sessions.limit', count=0)
+    aggregator.assert_metric('freeswitch.sessions.created', count=0)
+    assert 'api show status' not in server.api_lines
+
+
+def test_failure_log_names_only_fixed_text_for_a_status_failure(
+    make_server: MakeServer,
+    make_check: MakeCheck,
+    dd_run_check: Callable[..., None],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    server = make_server()
+    server.responses['show status'] = ('garbage ' + SENTINEL_PASSWORD + '\n').encode()
+    dd_run_check(make_check(server))
+    assert SENTINEL_PASSWORD not in caplog.text
+    assert 'error_type=parse' in caplog.text
+
+
+@pytest.mark.parametrize(
+    'connect_timeout, read_timeout, interval, expected',
+    [(3.0, 3.0, 15, 13.5), (0.5, 0.3, 15, 1.7), (30, 30, 15, 13.5), (2, 5, 20, 18.0)],
+)
+def test_run_budget_accounts_for_four_default_commands(
+    connect_timeout: float,
+    read_timeout: float,
+    interval: float,
+    expected: float,
+    make_server: MakeServer,
+    make_check: MakeCheck,
+) -> None:
+    server = make_server()
+    check = make_check(
+        server, connect_timeout=connect_timeout, read_timeout=read_timeout, min_collection_interval=interval
+    )
+    check.load_configuration_models()
+    check._configure()
+    assert check._run_budget == pytest.approx(expected)
+    assert check._run_budget <= interval * 0.9 + 1e-9
+
+
+def test_status_query_respects_the_run_deadline(make_server: MakeServer) -> None:
+    server = make_server()
+    client = EslClient('127.0.0.1', server.port, SENTINEL_PASSWORD, connect_timeout=0.5, read_timeout=0.3)
+    deadline = time.monotonic() + 2
+    client.connect(deadline)
+    assert client.api('show status', deadline).startswith(b'UP ')
+    with pytest.raises(esl.EslTimeoutError):
+        client.api('show status', time.monotonic() - 1)
+    client.close()
+
+
+def test_userauth_account_with_exact_policy_can_query_status(
+    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
+) -> None:
+    server = _userauth_server(make_server)
+    dd_run_check(make_check(server, username='monitor@example.org'))
+    aggregator.assert_metric('freeswitch.sessions.limit', 200, count=1)
+    aggregator.assert_metric('freeswitch.sessions.created', 4, count=1)
+    assert server.api_lines == EXPECTED_API_LINES
+    assert [line.split(' ')[0] for line in server.lines][:1] == ['userauth']
+
+
+def test_policy_set_is_unchanged_by_the_status_query() -> None:
+    assert esl.REQUIRED_API_PERMISSIONS == {'uptime', 'show'}
+    assert esl.CMD_STATUS.split(' ')[0] in esl.REQUIRED_API_PERMISSIONS  # first word `show`, already permitted

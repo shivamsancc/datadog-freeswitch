@@ -48,6 +48,15 @@ instances:
     #
     # read_timeout: 3
 
+    ## @param collect_bridged_calls - boolean - optional - default: false
+    ## Whether to report `freeswitch.calls.bridged`. Disabled by default. FreeSWITCH answers
+    ## `show bridged_calls count` with the whole listing of bridged calls (caller IDs and extensions included,
+    ## about 400 bytes per call), followed by the count. The check reads only the count and never stores or logs
+    ## the rows, but the listing crosses the unencrypted Event Socket on every run. Enable only if you accept that
+    ## transfer.
+    #
+    # collect_bridged_calls: false
+
     ## @param tags - list of strings - optional
     ## A list of tags to attach to every metric and service check emitted by this instance.
     ##

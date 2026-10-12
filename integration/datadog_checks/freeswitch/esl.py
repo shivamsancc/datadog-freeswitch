@@ -17,14 +17,25 @@ import re
 import select
 import socket
 import time
+from typing import NamedTuple
 
 # The only commands this client will ever send, matched exactly.
 CMD_UPTIME = 'uptime s'
 CMD_CHANNELS = 'show channels count'
-ALLOWED_COMMANDS = frozenset({CMD_UPTIME, CMD_CHANNELS})
+# Session capacity. Tested on FreeSWITCH 1.10.12 only: a restricted account limited to ``uptime,show`` may run it
+# (first word ``show``); the separate ``status`` command is not permitted for that account and is not used.
+CMD_STATUS = 'show status'
+# Count of registered endpoints (``N total.``). Observed on 1.10.12 with real SIP registrations; count-only reply.
+CMD_REGISTRATIONS = 'show registrations count'
+# Bridged calls. FreeSWITCH ignores ``count`` for this table and returns the full listing followed by ``N total.``,
+# so only the trailing line is interpreted (see ``parse_bridged_calls``) and a larger body limit applies.
+CMD_BRIDGED = 'show bridged_calls count'
+ALLOWED_COMMANDS = frozenset({CMD_UPTIME, CMD_CHANNELS, CMD_STATUS, CMD_REGISTRATIONS, CMD_BRIDGED})
 
 MAX_HEADER_BYTES = 8 * 1024
 MAX_BODY_BYTES = 64 * 1024
+# The bridged-calls listing grows with the number of calls (about 600 bytes per row).
+MAX_LISTING_BYTES = 2 * 1024 * 1024
 _RECV_SIZE = 4096
 _MAX_ADDRESSES = 4
 
@@ -37,6 +48,12 @@ ERROR_TYPES = (ERROR_CONNECT, ERROR_TIMEOUT, ERROR_AUTH, ERROR_PROTOCOL, ERROR_P
 
 _DIGITS = re.compile(r'[0-9]+')
 _CHANNELS = re.compile(r'([0-9]+) total\.')
+_TOTAL = re.compile(r'([0-9]+) total\.')
+_STATUS_CREATED = re.compile(r'([0-9]+) session\(s\) since startup')
+_STATUS_LIMIT = re.compile(r'([0-9]+) session\(s\) max')
+_STATUS_CURRENT = re.compile(r'([0-9]+) session\(s\) - peak ([0-9]+), last 5min ([0-9]+)')
+_STATUS_RATE = re.compile(r'([0-9]+) session\(s\) per Sec out of max ([0-9]+), peak ([0-9]+), last 5min ([0-9]+)')
+_STATUS_MAX_DIGITS = 15
 _USERNAME = re.compile(r'[^\s@:]+@[^\s@:]+')
 
 # First words of the two commands above. FreeSWITCH's ``esl-allowed-api`` matches only the first word, so
@@ -45,9 +62,14 @@ REQUIRED_API_PERMISSIONS = frozenset({'uptime', 'show'})
 
 
 class EslError(Exception):
-    """Base class of operational errors. ``error_type`` is one of ``ERROR_TYPES``."""
+    """Base class of operational errors. ``error_type`` is one of ``ERROR_TYPES``.
+
+    ``connection_usable`` is True only when the failure was an application-level answer of the server (the
+    message was received completely and the stream is in sync), so a later query on the same connection is safe.
+    """
 
     error_type = ERROR_PROTOCOL
+    connection_usable = False
 
 
 class EslConnectError(EslError):
@@ -68,6 +90,20 @@ class EslProtocolError(EslError):
 
 class EslParseError(EslError):
     error_type = ERROR_PARSE
+    # Raised after a complete, in-sync response was received.
+    connection_usable = True
+
+
+class EslCommandRefused(EslAuthError):
+    """The server refused one command (permission denied) after a complete, in-sync reply."""
+
+    connection_usable = True
+
+
+class EslCommandFailed(EslProtocolError):
+    """The server answered one command with ``-ERR`` after a complete, in-sync reply."""
+
+    connection_usable = True
 
 
 class EslCommandNotAllowed(ValueError):
@@ -97,15 +133,101 @@ def parse_uptime(body: bytes) -> int:
     return int(text)
 
 
-def parse_channels(body: bytes) -> int:
+def _decode_text(body: bytes, what: str) -> str:
     try:
-        text = body.decode('utf-8').strip()
+        text = body.decode('utf-8')
     except UnicodeDecodeError:
-        raise EslParseError('channel count response is not valid UTF-8') from None
-    match = _CHANNELS.fullmatch(text)
-    if not match or not text.isascii():
+        raise EslParseError('{} response is not valid UTF-8'.format(what)) from None
+    if not text.isascii():
+        raise EslParseError('{} response has an unexpected format'.format(what))
+    return text
+
+
+def parse_channels(body: bytes) -> int:
+    match = _CHANNELS.fullmatch(_decode_text(body, 'channel count').strip())
+    if not match:
         raise EslParseError('channel count response has an unexpected format')
     return int(match.group(1))
+
+
+def parse_registrations(body: bytes) -> int:
+    """The number from ``show registrations count`` (``N total.``). No other content is accepted."""
+    match = _TOTAL.fullmatch(_decode_text(body, 'registration count').strip())
+    if not match or len(match.group(1)) > _STATUS_MAX_DIGITS:
+        raise EslParseError('registration count response has an unexpected format')
+    return int(match.group(1))
+
+
+def parse_bridged_calls(body: bytes) -> int:
+    """The number of bridged calls from ``show bridged_calls count``.
+
+    FreeSWITCH answers with the full listing (a CSV header and one row per bridged call) followed by ``N total.``
+    (``0 total.`` alone when there are none). Only the final line is read as the value; a non-empty listing must
+    begin with the expected CSV header. Rows are never interpreted, stored or logged.
+    """
+    text = _decode_text(body, 'bridged call')
+    lines = [line.strip() for line in text.split('\n') if line.strip()]
+    if not lines:
+        raise EslParseError('bridged call response has an unexpected format')
+    match = _TOTAL.fullmatch(lines[-1])
+    if not match or len(match.group(1)) > _STATUS_MAX_DIGITS:
+        raise EslParseError('bridged call response has an unexpected format')
+    value = int(match.group(1))
+    if value > 0 and not lines[0].startswith('uuid,'):
+        raise EslParseError('bridged call response has an unexpected format')
+    return value
+
+
+def _status_field(
+    lines: list[str], marker: str, pattern: re.Pattern[str], required: bool = True
+) -> tuple[int, ...] | None:
+    """The groups of the one line containing ``marker``. At most one candidate may exist and it must be valid."""
+    candidates = [line for line in lines if marker in line]
+    if not candidates and not required:
+        return None
+    if len(candidates) != 1:
+        raise EslParseError('status response has a missing or repeated session field')
+    match = pattern.fullmatch(candidates[0])
+    if match is None or any(len(g) > _STATUS_MAX_DIGITS for g in match.groups()) or not candidates[0].isascii():
+        raise EslParseError('status response has an unexpected session field format')
+    return tuple(int(g) for g in match.groups())
+
+
+class StatusFields(NamedTuple):
+    """Values of ``show status``. The ``None`` fields are absent on FreeSWITCH versions that do not print the line."""
+
+    created: int
+    limit: int
+    active: int | None
+    peak: int | None
+    peak_5min: int | None
+    rate_limit: int | None
+    rate_peak: int | None
+
+
+def parse_status(body: bytes) -> StatusFields:
+    """Parse the session lines of the body of ``show status``.
+
+    ``<N> session(s) since startup`` and ``<N> session(s) max`` must each occur exactly once. The current/peak line
+    (``<N> session(s) - peak P, last 5min Q``) and the rate line (``<N> session(s) per Sec out of max M, peak P,
+    last 5min Q``) may be absent, but if present they must be valid. No other field is interpreted.
+    """
+    text = _decode_text(body, 'status')
+    lines = [line.strip() for line in text.split('\n')]
+    created = _status_field(lines, ' session(s) since startup', _STATUS_CREATED)
+    limit = _status_field(lines, ' session(s) max', _STATUS_LIMIT)
+    current = _status_field(lines, ' session(s) - peak ', _STATUS_CURRENT, required=False)
+    rate = _status_field(lines, ' session(s) per Sec out of max ', _STATUS_RATE, required=False)
+    assert created is not None and limit is not None
+    return StatusFields(
+        created=created[0],
+        limit=limit[0],
+        active=current[0] if current else None,
+        peak=current[1] if current else None,
+        peak_5min=current[2] if current else None,
+        rate_limit=rate[1] if rate else None,
+        rate_peak=rate[2] if rate else None,
+    )
 
 
 class EslClient:
@@ -257,19 +379,24 @@ class EslClient:
 
     # -- commands ---------------------------------------------------------------------------------------------
 
-    def api(self, command: str, deadline: float) -> bytes:
-        """Run one allowlisted API command and return the raw response body. Closes on any failure."""
+    def api(self, command: str, deadline: float, max_body: int = MAX_BODY_BYTES) -> bytes:
+        """Run one allowlisted API command and return the raw response body.
+
+        Closes the connection on any failure, except when the server answered completely and in sync with a
+        refusal (``permission denied``) or a command error (``-ERR``): those leave the connection usable.
+        """
         if command not in ALLOWED_COMMANDS or '\r' in command or '\n' in command:
             raise EslCommandNotAllowed('command is not allowed')
         if self._sock is None:
             raise EslConnectError('not connected')
         try:
             self._send('api ' + command, deadline)
-            headers, body = self._read_message(deadline)
+            headers, body = self._read_message(deadline, max_body)
             content_type = headers.get('content-type')
             if content_type == 'command/reply':
                 if headers.get('reply-text', '').startswith('-ERR permission denied'):
-                    raise EslAuthError('command was refused by the server')
+                    self._ensure_drained()
+                    raise EslCommandRefused('command was refused by the server')
                 raise EslProtocolError('unexpected command reply')
             if content_type != 'api/response':
                 raise EslProtocolError('unexpected response type')
@@ -277,8 +404,12 @@ class EslClient:
                 raise EslProtocolError('response has no content length')
             self._ensure_drained()
             if body.startswith(b'-ERR'):
-                raise EslProtocolError('server reported a command error')
+                raise EslCommandFailed('server reported a command error')
             return body
+        except EslError as e:
+            if not e.connection_usable:
+                self.close()
+            raise
         except BaseException:
             self.close()
             raise
@@ -316,7 +447,7 @@ class EslClient:
             raise EslConnectError('connection closed by FreeSWITCH')
         self._buf += chunk
 
-    def _read_message(self, run_deadline: float) -> tuple[dict[str, str], bytes]:
+    def _read_message(self, run_deadline: float, max_body: int = MAX_BODY_BYTES) -> tuple[dict[str, str], bytes]:
         """Read exactly one ESL message. The whole message must arrive within one read timeout."""
         message_deadline = min(time.monotonic() + self._read_timeout, run_deadline)
 
@@ -343,7 +474,7 @@ class EslClient:
             if not (value.isascii() and value.isdigit()):
                 raise EslProtocolError('invalid content length')
             length = int(value)
-            if length > MAX_BODY_BYTES:
+            if length > max_body:
                 raise EslProtocolError('response body is too large')
         while len(self._buf) < length:
             self._fill(message_deadline)

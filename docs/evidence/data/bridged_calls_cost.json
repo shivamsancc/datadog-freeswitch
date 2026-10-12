@@ -1,0 +1,101 @@
+{
+ "note": "Disposable FreeSWITCH 1.10.12 in Docker (Desktop, macOS), loopback SIP bridges (4 channels each), 15 samples per level, one connection reused.",
+ "levels": [
+  {
+   "bridges": 0,
+   "channels": 0,
+   "bridged_response_bytes": 10,
+   "bridged_ms_median": 2.0,
+   "bridged_ms_max": 2.9,
+   "full_run_ms_median": 3.8,
+   "full_run_ms_max": 6.7,
+   "samples": 15,
+   "parsed": 0,
+   "idle_cpu_line": "min idle cpu 0.00/99.57"
+  },
+  {
+   "bridges": 1,
+   "channels": 4,
+   "bridged_response_bytes": 879,
+   "bridged_ms_median": 2.5,
+   "bridged_ms_max": 5.5,
+   "full_run_ms_median": 4.5,
+   "full_run_ms_max": 7.6,
+   "samples": 15,
+   "parsed": 1,
+   "idle_cpu_line": "min idle cpu 0.00/99.43"
+  },
+  {
+   "bridges": 5,
+   "channels": 20,
+   "bridged_response_bytes": 2459,
+   "bridged_ms_median": 2.4,
+   "bridged_ms_max": 3.8,
+   "full_run_ms_median": 3.9,
+   "full_run_ms_max": 6.5,
+   "samples": 15,
+   "parsed": 5,
+   "idle_cpu_line": "min idle cpu 0.00/99.27"
+  },
+  {
+   "bridges": 10,
+   "channels": 40,
+   "bridged_response_bytes": 4435,
+   "bridged_ms_median": 2.9,
+   "bridged_ms_max": 4.4,
+   "full_run_ms_median": 4.1,
+   "full_run_ms_max": 6.6,
+   "samples": 15,
+   "parsed": 10,
+   "idle_cpu_line": "min idle cpu 0.00/99.03"
+  },
+  {
+   "bridges": 25,
+   "channels": 100,
+   "bridged_response_bytes": 10360,
+   "bridged_ms_median": 2.9,
+   "bridged_ms_max": 4.5,
+   "full_run_ms_median": 4.6,
+   "full_run_ms_max": 9.9,
+   "samples": 15,
+   "parsed": 25,
+   "idle_cpu_line": "min idle cpu 0.00/98.73"
+  },
+  {
+   "bridges": 50,
+   "channels": 200,
+   "bridged_response_bytes": 20235,
+   "bridged_ms_median": 3.4,
+   "bridged_ms_max": 6.1,
+   "full_run_ms_median": 5.0,
+   "full_run_ms_max": 7.5,
+   "samples": 15,
+   "parsed": 50,
+   "idle_cpu_line": "min idle cpu 0.00/98.37"
+  },
+  {
+   "bridges": 100,
+   "channels": 400,
+   "bridged_response_bytes": 39986,
+   "bridged_ms_median": 2.9,
+   "bridged_ms_max": 4.8,
+   "full_run_ms_median": 3.7,
+   "full_run_ms_max": 7.1,
+   "samples": 15,
+   "parsed": 100,
+   "idle_cpu_line": "min idle cpu 0.00/97.70"
+  },
+  {
+   "bridges": 150,
+   "channels": 600,
+   "bridged_response_bytes": 59736,
+   "bridged_ms_median": 6.6,
+   "bridged_ms_max": 9.7,
+   "full_run_ms_median": 7.4,
+   "full_run_ms_max": 11.6,
+   "samples": 15,
+   "parsed": 150,
+   "idle_cpu_line": "min idle cpu 0.00/97.40"
+  }
+ ]
+}

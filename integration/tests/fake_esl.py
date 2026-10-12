@@ -11,9 +11,25 @@ import time
 from typing import Callable
 
 GREETING = b'Content-Type: auth/request\n\n'
+# Body of ``show status`` as captured from the FreeSWITCH 1.10.12 lab (Session C, restricted account, idle, one earlier
+# call). It contains no identifiers; only the uptime line varies between captures. Real capture, not synthetic.
+STATUS_1_10_12 = (
+    b'UP 0 years, 0 days, 7 hours, 49 minutes, 43 seconds, 402 milliseconds, 400 microseconds\n'
+    b'FreeSWITCH (Version 1.10.12 -release 64bit) is ready\n'
+    b'4 session(s) since startup\n'
+    b'0 session(s) - peak 4, last 5min 0 \n'
+    b'0 session(s) per Sec out of max 30, peak 4, last 5min 0\n'
+    b'200 session(s) max\n'
+    b'min idle cpu 0.00/99.43\n'
+    b'Current Stack Size/Max 240K/8192K\n'
+)
+
 DEFAULT_RESPONSES = {
     'uptime s': b'3401\n',
     'show channels count': b'\n4 total.\n',
+    'show status': STATUS_1_10_12,
+    'show registrations count': b'\n1 total.\n',
+    'show bridged_calls count': b'\n0 total.\n',
 }
 
 

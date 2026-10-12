@@ -31,7 +31,8 @@ flowchart LR
 ## Connection architecture
 
 The check opens one outbound TCP connection per configured instance, authenticates (`auth <password>` or
-`userauth <user@domain>:<password>`), then runs `api uptime s` and `api show channels count` each run. The connection is
+`userauth <user@domain>:<password>`), then runs `api uptime s`, `api show channels count`, `api show status` and `api show registrations count` each run, and `api show bridged_calls count` only if
+`collect_bridged_calls` is enabled. The connection is
 reused between runs and replaced once per run if it went stale.
 
 Reachability is the only environment-dependent part. These are alternatives, not requirements:
@@ -53,17 +54,25 @@ is typically the Docker gateway or the forwarder container's address, not `127.0
 ## Metrics flow
 
 1. The Agent schedules the check (default every 15 s; a run is capped at 90% of the interval).
-2. The check connects or reuses its connection and issues the two commands, bounded by `connect_timeout` and
-   `read_timeout` and the 64 KiB body / 8 KiB header limits.
-3. On success it emits `freeswitch.uptime`, `freeswitch.channels.active`, `freeswitch.can_connect=1`,
+2. The check connects or reuses its connection and issues the four commands (five with `collect_bridged_calls`), bounded by `connect_timeout` and
+   `read_timeout` (the run budget is `connect_timeout + 4 × read_timeout`, 5 with the option, capped at 90% of the interval) and the
+   64 KiB body (2 MiB for the bridged-calls listing only) / 8 KiB header limits.
+3. On success it emits `freeswitch.uptime`, `freeswitch.channels.active`, `freeswitch.sessions.{active,peak,limit,created}`,
+   `freeswitch.sessions.rate.limit`, `freeswitch.registrations`, `freeswitch.calls.bridged` (only if enabled),
+   `freeswitch.can_connect=1`,
    `freeswitch.collection.errors=0` and `freeswitch.collection.duration`.
 4. On failure it emits `can_connect=0`, `collection.errors=1` with a bounded `error_type` tag, and the duration; it emits
-   no uptime or channel value for that run.
+   no uptime or channel value for that run. If only an optional query (`show status`, `show registrations count`, `show bridged_calls count`)
+   fails, the run stays available: `can_connect=1`, the metrics of the queries that succeeded are emitted, those of the
+   failed query are not, and `collection.errors=1` carries the `error_type` (one sample per distinct type).
 5. The Agent forwards the series to Datadog, tagged with `freeswitch_host`, `freeswitch_port` and the configured tags.
 
 ## Security boundaries
 
-- The client has a fixed two-command allowlist; configuration cannot add commands.
+- The client has a fixed five-command allowlist (the fifth is sent only when `collect_bridged_calls` is on; `uptime s`, `show channels count`, `show status`,
+  `show registrations count`, `show bridged_calls count`); configuration
+  cannot add commands. The three `show` commands fall under the `show` entry of the unchanged `uptime,show` account policy;
+  `status`, `version` and `sofia` are not on the allowlist.
 - With `username`, the account must be advertised as limited to `uptime` and `show`; otherwise the run fails with
   `error_type:auth`. There is no fallback to the shared password.
 - Errors and logs use fixed text; server replies, passwords and commands are never placed in tags, logs or exceptions.

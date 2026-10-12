@@ -21,6 +21,7 @@ class InstanceConfig(BaseModel):
         arbitrary_types_allowed=True,
         frozen=True,
     )
+    collect_bridged_calls: Optional[bool] = None
     connect_timeout: Optional[float] = Field(None, ge=0.1, le=30.0)
     empty_default_hostname: Optional[bool] = None
     host: str

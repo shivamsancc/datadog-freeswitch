@@ -1,0 +1,227 @@
+{
+ "note": "Same experiment after the check submits a 0 baseline sample when it detects a restart.",
+ "run": {
+  "timeline": [
+   {
+    "t": 0.0,
+    "event": "start (idle)",
+    "raw_since_startup": 0
+   },
+   {
+    "t": 16.1,
+    "event": "after 2 calls (4 sessions)",
+    "raw_since_startup": 4
+   },
+   {
+    "t": 36.1,
+    "event": "before restart",
+    "raw_since_startup": 4
+   },
+   {
+    "t": 43.0,
+    "event": "after restart (new process)",
+    "raw_since_startup": 0
+   },
+   {
+    "t": 63.1,
+    "event": "idle after restart",
+    "raw_since_startup": 0
+   },
+   {
+    "t": 64.2,
+    "event": "after 1 call (2 sessions)",
+    "raw_since_startup": 2
+   },
+   {
+    "t": 85.4,
+    "event": "after 3 more calls (6 sessions)",
+    "raw_since_startup": 8
+   },
+   {
+    "t": 95.4,
+    "event": "before second restart",
+    "raw_since_startup": 8
+   },
+   {
+    "t": 102.9,
+    "event": "after second restart and 12 failed originates",
+    "raw_since_startup": 12
+   },
+   {
+    "t": 127.9,
+    "event": "end",
+    "raw_since_startup": 12
+   }
+  ],
+  "agent_sessions_created_points": [
+   {
+    "t": -33,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": -28,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": -23,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": -18,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": -13,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": -8,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": -3,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 2,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 7,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 12,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 17,
+    "value": 4,
+    "type": "count"
+   },
+   {
+    "t": 22,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 27,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 32,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 37,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 42,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 47,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 52,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 57,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 62,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 67,
+    "value": 2,
+    "type": "count"
+   },
+   {
+    "t": 72,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 77,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 82,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 87,
+    "value": 6,
+    "type": "count"
+   },
+   {
+    "t": 92,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 102,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 107,
+    "value": 12,
+    "type": "count"
+   },
+   {
+    "t": 112,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 117,
+    "value": 0,
+    "type": "count"
+   }
+  ],
+  "agent_sessions_created_nonzero": [
+   {
+    "t": 17,
+    "value": 4
+   },
+   {
+    "t": 67,
+    "value": 2
+   },
+   {
+    "t": 87,
+    "value": 6
+   },
+   {
+    "t": 107,
+    "value": 12
+   }
+  ]
+ }
+}

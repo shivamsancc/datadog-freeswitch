@@ -4,6 +4,10 @@
 #     ddev -x validate models -s <INTEGRATION_NAME>
 
 
+def instance_collect_bridged_calls():
+    return False
+
+
 def instance_connect_timeout():
     return 3
 

@@ -1,0 +1,227 @@
+{
+ "note": "Real Datadog Agent 7.80.3 running this check against a disposable FreeSWITCH 1.10.12; intake was a local sink. Before the baseline-reset change (plain monotonic_count). t is seconds from the start of the timeline; Agent points are 5 s apart.",
+ "run": {
+  "timeline": [
+   {
+    "t": 0.0,
+    "event": "start (idle)",
+    "raw_since_startup": 0
+   },
+   {
+    "t": 16.1,
+    "event": "after 2 calls (4 sessions)",
+    "raw_since_startup": 4
+   },
+   {
+    "t": 36.1,
+    "event": "before restart",
+    "raw_since_startup": 4
+   },
+   {
+    "t": 43.0,
+    "event": "after restart (new process)",
+    "raw_since_startup": 0
+   },
+   {
+    "t": 63.1,
+    "event": "idle after restart",
+    "raw_since_startup": 0
+   },
+   {
+    "t": 64.1,
+    "event": "after 1 call (2 sessions)",
+    "raw_since_startup": 2
+   },
+   {
+    "t": 85.3,
+    "event": "after 3 more calls (6 sessions)",
+    "raw_since_startup": 8
+   },
+   {
+    "t": 95.3,
+    "event": "before second restart",
+    "raw_since_startup": 8
+   },
+   {
+    "t": 102.3,
+    "event": "after second restart and 12 failed originates",
+    "raw_since_startup": 12
+   },
+   {
+    "t": 127.3,
+    "event": "end",
+    "raw_since_startup": 12
+   }
+  ],
+  "agent_sessions_created_points": [
+   {
+    "t": -32,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": -27,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": -22,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": -17,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": -12,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": -7,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": -2,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 3,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 8,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 13,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 18,
+    "value": 4,
+    "type": "count"
+   },
+   {
+    "t": 23,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 28,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 33,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 38,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 43,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 48,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 53,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 58,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 63,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 68,
+    "value": 2,
+    "type": "count"
+   },
+   {
+    "t": 73,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 78,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 83,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 88,
+    "value": 6,
+    "type": "count"
+   },
+   {
+    "t": 93,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 103,
+    "value": 4,
+    "type": "count"
+   },
+   {
+    "t": 108,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 113,
+    "value": 0,
+    "type": "count"
+   },
+   {
+    "t": 118,
+    "value": 0,
+    "type": "count"
+   }
+  ],
+  "agent_sessions_created_nonzero": [
+   {
+    "t": 18,
+    "value": 4
+   },
+   {
+    "t": 68,
+    "value": 2
+   },
+   {
+    "t": 88,
+    "value": 6
+   },
+   {
+    "t": 103,
+    "value": 4
+   }
+  ]
+ }
+}

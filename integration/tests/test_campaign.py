@@ -37,6 +37,13 @@ ALL_METRICS = [
     'freeswitch.channels.active',
     'freeswitch.collection.duration',
     'freeswitch.collection.errors',
+    'freeswitch.sessions.limit',
+    'freeswitch.sessions.created',
+    'freeswitch.sessions.active',
+    'freeswitch.sessions.peak',
+    'freeswitch.sessions.rate.limit',
+    'freeswitch.registrations',
+    'freeswitch.calls.bridged',
 ]
 
 

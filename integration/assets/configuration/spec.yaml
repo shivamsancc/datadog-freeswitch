@@ -60,5 +60,16 @@ files:
         maximum: 30
         example: 3
         display_default: 3
+    - name: collect_bridged_calls
+      description: |
+        Whether to report `freeswitch.calls.bridged`. Disabled by default. FreeSWITCH answers
+        `show bridged_calls count` with the whole listing of bridged calls (caller IDs and extensions included,
+        about 400 bytes per call), followed by the count. The check reads only the count and never stores or logs
+        the rows, but the listing crosses the unencrypted Event Socket on every run. Enable only if you accept that
+        transfer.
+      value:
+        type: boolean
+        example: false
+        display_default: false
     - template: instances/tags
     - template: instances/global

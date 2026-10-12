@@ -3,9 +3,11 @@
 ## Overview
 
 This check monitors a [FreeSWITCH][1] server through the Datadog Agent. It connects to the FreeSWITCH Event Socket (ESL)
-and reports the availability, uptime and channel count of the server.
+and reports the availability, uptime, channel and session counts, session capacity, registrations and bridged calls of the server.
 
-The check only runs two read-only commands, `uptime s` and `show channels count`, and does not subscribe to events.
+The check runs four read-only commands by default, `uptime s`, `show channels count`, `show status` and
+`show registrations count`, plus `show bridged_calls count` only if you set `collect_bridged_calls: true`. It does not
+subscribe to events.
 
 ## Setup
 
@@ -62,7 +64,10 @@ What this does and does not guarantee:
   commands, is rejected with `error_type:auth` before any command is sent. The check never falls back to the shared password.
 - FreeSWITCH matches `esl-allowed-api` on the **first word** of a command only. `uptime,show` therefore allows every `uptime`
   and every `show` subcommand, not just `uptime s` and `show channels count`. `show` is read-only, but some subcommands
-  list channel UUIDs and caller details. The check itself only ever sends the two commands above.
+  list channel UUIDs and caller details. The check itself only ever sends the commands above.
+- `show status`, `show registrations count` and `show bridged_calls count` are covered by the same `show` entry; they need
+  no additional permission. The separate `status` command is
+  **not** permitted for an `uptime,show` account and the check never sends it.
 - Without `username`, the check authenticates with the shared Event Socket password. That password allows full control of
   FreeSWITCH, including running system commands, and the check cannot tell how it is limited.
 
@@ -103,11 +108,12 @@ What this does and does not guarantee:
 | `password` | yes | | Shared password, or the user's `esl-password` when `username` is set |
 | `connect_timeout` | no | `3` | Seconds, `0.1` to `30` |
 | `read_timeout` | no | `3` | Seconds per response, `0.1` to `30` |
+| `collect_bridged_calls` | no | `false` | Report `freeswitch.calls.bridged`; see the cost note below |
 | `tags` | no | | Added to every metric |
 | `min_collection_interval` | no | `15` | A run is capped at 90% of this value |
 
-Each run makes one TCP connection (reused between runs) and two requests. A run's total time is limited to
-`connect_timeout + 2 x read_timeout`, and to 90% of `min_collection_interval`.
+Each run makes one TCP connection (reused between runs) and four requests (five with `collect_bridged_calls`). A run's total time is limited to
+`connect_timeout + 4 x read_timeout` (5 with `collect_bridged_calls`), and to 90% of `min_collection_interval`.
 
 **Host names.** An IP address is connected to directly. A host name is resolved by the operating system, which the check
 cannot interrupt, so a slow DNS server can delay a run past the configured timeouts (the check does not connect after its deadline).
@@ -115,8 +121,8 @@ Use a host name only where DNS behavior is predictable, or use an IP address.
 
 ### Connection Architecture and Deployment Scenarios
 
-The check opens one outbound TCP connection per instance from the Agent to the FreeSWITCH Event Socket and runs two read-only
-commands. It only needs a `host` and `port` that the Agent process can reach. The `port` option selects the **destination**
+The check opens one outbound TCP connection per instance from the Agent to the FreeSWITCH Event Socket and runs four read-only
+commands (five with `collect_bridged_calls`). It only needs a `host` and `port` that the Agent process can reach. The `port` option selects the **destination**
 port the check connects to; it does not configure FreeSWITCH. FreeSWITCH itself must be set to listen on that port
 (`listen-port` in `event_socket.conf.xml`).
 
@@ -294,8 +300,49 @@ See [metadata.csv][8] for a list of metrics provided by this integration.
 
 `freeswitch.channels.active` counts channels, not calls. A bridged call usually has two or more channels.
 
-When a run fails, `freeswitch.can_connect` is `0`, `freeswitch.collection.errors` is `1` with an `error_type` tag, and no uptime or
-channel value is reported for that run. `freeswitch.collection.duration` is always reported.
+The session, registration and bridged-call metrics:
+
+| Metric | Type | Source | Meaning |
+|---|---|---|---|
+| `freeswitch.sessions.active` | gauge | `show status`, `N session(s) - peak P` line | Sessions that exist now. Equal to `freeswitch.channels.active` on every sample observed (one session per channel) |
+| `freeswitch.sessions.peak` | gauge | same line, `peak P` | **All-time high-water mark** since the FreeSWITCH process started; never decreases until a restart |
+| `freeswitch.sessions.created` | monotonic count | `show status`, `N session(s) since startup` | Cumulative sessions created since start, submitted raw so that the Agent reports the increase per interval. A FreeSWITCH restart is detected (uptime or counter went down) and a `0` sample is submitted first, so the new process is counted in full. Not counted: sessions created before the Agent's first sample, and the increase of a restart the check cannot see: the Agent (and with it the check's memory) was restarted at the same time, or the new process already has both a higher uptime and a higher counter than the last sample (an old process younger than one interval). A restart that happens while a run fails is detected on the next successful run. Includes sessions of failed call attempts |
+| `freeswitch.sessions.limit` | gauge | `show status`, `N session(s) max` | `max-sessions` |
+| `freeswitch.sessions.rate.limit` | gauge | `show status`, rate line, `out of max M` | `sessions-per-second` |
+| `freeswitch.registrations` | gauge | `show registrations count` | Current SIP registrations across all profiles (no per-profile or per-user tag) |
+| `freeswitch.calls.bridged` | gauge | `show bridged_calls count` | **Opt-in** (`collect_bridged_calls: true`). Pairs of channels currently bridged: connected calls. Not ringing, parked or IVR calls; not channels |
+
+- The `show status` lines other than `since startup` and `max` are optional: a FreeSWITCH that does not print them still
+  reports `freeswitch.sessions.created` and `freeswitch.sessions.limit`. A line that is present but malformed fails the
+  whole `show status` query.
+- `show bridged_calls count` is **not** count-only: FreeSWITCH returns the whole listing, including caller IDs and
+  extensions, followed by `N total.`. The check reads only the final line and never stores, logs or tags row content, but
+  the listing crosses the unencrypted Event Socket on every run. That is why `freeswitch.calls.bridged` is **off by
+  default**. Measured on a disposable FreeSWITCH 1.10.12: about 400 bytes per bridged call (879 B for 1, 39,986 B for 100,
+  59,736 B for 150), 2 to 7 ms per response; at the default 15 s interval, 100 bridged calls transfer about 40 KB per run,
+  roughly 10 MB per hour and 230 MB per day, per instance. These are single-host, loopback measurements, not a
+  production sizing. The check accepts up to 2 MiB for this one response (other responses: 64 KiB); larger output is a
+  bounded `protocol` error and the other metrics are kept.
+- Counts from `show channels count`, `show registrations count` and `show bridged_calls count` come from FreeSWITCH's
+  core database, which is written asynchronously: they can trail call setup by about a second. The numbers in `show status`
+  do not.
+- Tested scope: FreeSWITCH 1.10.12, with a restricted `userauth` account limited to `uptime,show`. Other versions have not
+  been tested.
+- Not provided, with the reason: **logical call counts** (`show calls count` is channels minus bridged pairs, not calls);
+  **`last 5min` and sessions-per-second values** (the 5-minute figures reset on fixed five-minute boundaries, and the
+  current rate is a one-second sample); **per-profile and per-gateway state** (only available through the `sofia` command,
+  whose first word would also permit stopping or restarting profiles); **RTP statistics, jitter, packet loss and MOS**
+  (FreeSWITCH only publishes them per call when the call ends, in the `CHANNEL_HANGUP_COMPLETE` event or in CDRs; no
+  polled `show` command returns them).
+
+When a run fails because the connection, authentication or one of the two required queries (`uptime s`,
+`show channels count`) fails, `freeswitch.can_connect` is `0`, `freeswitch.collection.errors` is `1` with an `error_type`
+tag, and no other value is reported for that run. When only an optional query (`show status`,
+`show registrations count`, `show bridged_calls count`) fails, the run is still available: `freeswitch.can_connect` is `1`,
+every metric whose query succeeded is reported, the metrics of the failed query are omitted (never reported as zero),
+and `freeswitch.collection.errors` is `1` for each distinct `error_type`. A failure that closes the connection (a timeout
+or a lost connection) ends the remaining optional queries of that run; a refusal, a command error or an unparseable
+response does not. `freeswitch.collection.duration` is always reported.
 
 ### Events
 

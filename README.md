@@ -16,7 +16,7 @@
     <img src="https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python 3.13" />
     <img src="https://img.shields.io/badge/Datadog-Agent%20Check-632CA6?style=flat-square&logo=datadog&logoColor=white" alt="Datadog Agent check" />
     <img src="https://img.shields.io/badge/Protocol-ESL-475569?style=flat-square" alt="Event Socket Library" />
-    <img src="https://img.shields.io/badge/Tests-181%20passed%20locally-15803D?style=flat-square" alt="181 tests passed in the last reported local run" />
+    <img src="https://img.shields.io/badge/Tests-316%20unit%20%2B%2015%20runtime%20passed%20locally-15803D?style=flat-square" alt="316 unit tests and 15 disposable-FreeSWITCH runtime tests passed in the last local run" />
   </p>
 </div>
 
@@ -59,12 +59,12 @@ flowchart LR
     DD["Datadog metrics"]
     TEST["Automated tests<br/>Fake ESL server"]
     FS <--> ESL
-    CHECK -->|"uptime s<br/>show channels count"| ESL
+    CHECK -->|"uptime s<br/>show channels count<br/>show status"| ESL
     CHECK -->|"freeswitch.*"| DD
     TEST -. "validates behavior" .-> CHECK
 ```
 
-The check is intentionally scoped to the allowlisted ESL commands `uptime s` and `show channels count`. It does not collect CPU or memory usage, SIP registration state, RTP quality, or per-call details.
+The check is intentionally scoped to the allowlisted ESL commands `uptime s`, `show channels count` and `show status`. It does not collect CPU or memory usage, SIP registration state, RTP quality, or per-call details.
 
 ## Metrics
 
@@ -118,7 +118,7 @@ python -m pip install "datadog-checks-base[deps]>=37.36.0" datadog-checks-dev py
 pytest tests
 ```
 
-The last reported full local run completed with **181 tests passing and no expected failures**. This is a manually reported test result, not a live CI badge.
+The last reported full local run completed with **316 unit tests and 15 disposable-FreeSWITCH runtime tests passing, no failures** (see `docs/evidence/METRIC_VERIFICATION_REPORT.md`). This is a manually reported test result, not a live CI badge.
 
 ## Repository map
 
