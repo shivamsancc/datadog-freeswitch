@@ -1,0 +1,10 @@
+[env.collectors.datadog-checks]
+check-types = true
+mypy-deps = [
+  "datadog-checks-base>=37.36.0",
+  "datadog-checks-dev",
+  "pytest",
+]
+
+[[envs.default.matrix]]
+python = ["3.13"]

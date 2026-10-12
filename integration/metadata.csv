@@ -1,0 +1,6 @@
+metric_name,metric_type,interval,unit_name,per_unit_name,description,orientation,integration,short_name,curated_metric,sample_tags
+freeswitch.can_connect,gauge,,,,"1 if the check connected, authenticated and validated the FreeSWITCH responses during this run; 0 otherwise.",1,freeswitch,can connect,,
+freeswitch.uptime,gauge,,second,,The time in seconds that FreeSWITCH has been running.,0,freeswitch,uptime,,
+freeswitch.channels.active,gauge,,,,"The number of channels that currently exist in FreeSWITCH. This is a channel count and not a call count; a bridged call typically has two or more channels.",0,freeswitch,active channels,,
+freeswitch.collection.duration,gauge,,second,,The time in seconds that one run of the check took to collect from FreeSWITCH.,-1,freeswitch,collection duration,,
+freeswitch.collection.errors,count,,error,,The number of failed collection runs. Tagged by error_type: connect or timeout or auth or protocol or parse.,-1,freeswitch,collection errors,,error_type

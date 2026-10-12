@@ -1,6 +1,12 @@
+# Keep secrets, VCS data and non-image content out of any build context rooted at the repository.
 .git
 .env
 secrets
+results
 README.md
-tests
-scripts
+docs
+integration
+lab/tests
+lab/scripts
+lab/docs
+**/__pycache__

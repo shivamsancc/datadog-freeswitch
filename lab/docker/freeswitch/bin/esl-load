@@ -1,0 +1,477 @@
+#!/usr/bin/env python3
+"""Controlled synthetic call generator for the FreeSWITCH lab (runs inside the container).
+
+Originates bounded loopback calls through ESL and tracks each call's real lifecycle from
+CHANNEL_CREATE / CHANNEL_ANSWER / CHANNEL_HANGUP_COMPLETE events. It only ever dials the lab's
+own loopback extensions in the `default` context and only ever kills UUIDs it generated.
+Prefer lab/scripts/run-call-load.sh, which validates and wraps this tool.
+
+Exit codes: 0 all outcomes as expected | 1 outcome mismatch / failure | 2 auth rejected
+            3 cannot reach ESL | 4 invalid arguments | 5 cleanup left channels behind
+"""
+import argparse
+import json
+import os
+import re
+import signal
+import sys
+import threading
+import time
+import urllib.parse
+from datetime import datetime, timezone
+
+import esl_lab
+from esl_lab import Conn, Fail
+
+HARD_MAX_CALLS = 20          # concurrent calls, absolute ceiling
+DEFAULT_MAX_CALLS = 5        # without --allow-high
+HARD_MAX_HOLD = 60
+HARD_MAX_DURATION = 600
+HARD_MAX_TOTAL_CALLS = 200
+HARD_MAX_BATCHES = 50
+HARD_MAX_RAMP = 5.0          # calls/second (each call = 4 FreeSWITCH channels; core limit is 30 sessions/s)
+HARD_MAX_PAUSE = 60
+FAR_LEG_LONG = "93120"       # used by the timeout scenario; harness cuts it short
+NEAR_LEG = "9390"
+MISSING_DEST = "9998"        # intentionally has no dialplan route
+SCENARIOS = ("idle", "single", "concurrent", "normal", "timeout", "fail")
+RUN_ID_RE = re.compile(r"^[a-z0-9]{6,16}$")
+
+
+def now_iso():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def log(msg):
+    sys.stderr.write("[%s] %s\n" % (now_iso(), msg))
+    sys.stderr.flush()
+
+
+def validate(a):
+    if a.scenario not in SCENARIOS:
+        raise Fail(4, "unknown scenario")
+    if a.run_id is None or not RUN_ID_RE.match(a.run_id):
+        raise Fail(4, "--run-id must match [a-z0-9]{6,16}")
+    if a.scenario == "idle":
+        if a.calls not in (None, 0):
+            raise Fail(4, "idle scenario places no calls; do not pass --calls")
+        a.calls = 0
+        if not a.duration:
+            a.duration = 10
+    elif a.scenario == "single":
+        if a.calls not in (None, 1):
+            raise Fail(4, "single scenario is exactly 1 call")
+        a.calls = 1
+    elif a.scenario == "concurrent":
+        if a.calls is None:
+            a.calls = 3
+        if a.calls < 2:
+            raise Fail(4, "concurrent scenario needs --calls >= 2")
+    else:
+        if a.calls is None:
+            a.calls = 1
+        if a.calls < 1:
+            raise Fail(4, "--calls must be >= 1")
+    if a.calls > HARD_MAX_CALLS:
+        raise Fail(4, "--calls exceeds hard limit %d" % HARD_MAX_CALLS)
+    if a.calls > DEFAULT_MAX_CALLS and not a.allow_high:
+        raise Fail(4, "--calls above %d requires --allow-high (hard limit %d)" % (DEFAULT_MAX_CALLS, HARD_MAX_CALLS))
+    if not (1 <= a.hold <= HARD_MAX_HOLD):
+        raise Fail(4, "--hold must be 1..%d seconds" % HARD_MAX_HOLD)
+    if not (0 <= a.duration <= HARD_MAX_DURATION):
+        raise Fail(4, "--duration must be 0..%d seconds" % HARD_MAX_DURATION)
+    if not (0.1 <= a.ramp <= HARD_MAX_RAMP):
+        raise Fail(4, "--ramp must be 0.1..%s calls/second" % HARD_MAX_RAMP)
+    if not (0 <= a.pause <= HARD_MAX_PAUSE):
+        raise Fail(4, "--pause must be 0..%d seconds" % HARD_MAX_PAUSE)
+    if not (1 <= a.max_batches <= HARD_MAX_BATCHES):
+        raise Fail(4, "--max-batches must be 1..%d" % HARD_MAX_BATCHES)
+
+
+class Run:
+    def __init__(self, a):
+        self.a = a
+        self.lock = threading.Lock()
+        self.calls = {}           # uuid -> record
+        self.stop = threading.Event()
+        self.aborted = False
+        self.ev_error = None
+
+    # -- event listener -------------------------------------------------
+    def listen(self):
+        conn = None
+        try:
+            conn = Conn(timeout=5)
+            conn.esl.send("event plain CHANNEL_CREATE CHANNEL_ANSWER CHANNEL_HANGUP_COMPLETE")
+            conn.esl.deadline = time.monotonic() + 5
+            conn.esl.read_message()          # command/reply
+            self.listening.set()
+            while not self.stop.is_set():
+                conn.esl.deadline = time.monotonic() + 1.0
+                try:
+                    headers, body = conn.esl.read_message()
+                except Fail as exc:
+                    if exc.message == "timed out":
+                        continue
+                    raise
+                if headers.get("content-type") != "text/event-plain":
+                    continue
+                ev = {}
+                for line in body.decode("utf-8", "replace").split("\n"):
+                    if not line:
+                        break
+                    k, _, v = line.partition(": ")
+                    ev[k] = urllib.parse.unquote(v)
+                self.on_event(ev)
+        except Fail as exc:
+            self.ev_error = exc.message
+        finally:
+            self.listening.set()
+            if conn:
+                conn.close()
+
+    def on_event(self, ev):
+        uuid = ev.get("Unique-ID", "")
+        with self.lock:
+            rec = self.calls.get(uuid)
+            if rec is None:
+                return
+            name = ev.get("Event-Name")
+            ts = ev.get("Event-Date-Timestamp")
+            ts = int(ts) / 1e6 if ts and ts.isdigit() else time.time()
+            if name == "CHANNEL_CREATE":
+                rec["t_create"] = ts
+            elif name == "CHANNEL_ANSWER":
+                rec["t_answer"] = ts
+            elif name == "CHANNEL_HANGUP_COMPLETE":
+                rec["t_hangup"] = ts
+                rec["hangup_cause"] = ev.get("Hangup-Cause")
+
+    # -- one call ---------------------------------------------------------
+    def originate(self, rec):
+        a = self.a
+        if a.scenario == "fail":
+            far = MISSING_DEST
+            app = "park"
+            bound = a.hold + 10
+        elif a.scenario == "timeout":
+            far = FAR_LEG_LONG
+            bound = a.hold
+        else:
+            far = "93%03d" % a.hold
+            bound = a.hold + 10
+        rec["bound_s"] = bound
+        near = MISSING_DEST if a.scenario == "fail" else NEAR_LEG
+        vars_ = ("origination_uuid=%s,lab_run_id=%s,originate_timeout=10,"
+                 "execute_on_answer='sched_hangup +%d ALLOTTED_TIMEOUT'" % (rec["uuid"], a.run_id, bound))
+        target = "&park()" if a.scenario == "fail" else "&bridge(loopback/%s/default)" % far
+        cmd = "originate {%s}loopback/%s/default %s" % (vars_, near, target)
+        rec["t_sent"] = time.time()
+        try:
+            conn = Conn(timeout=5)
+            try:
+                rec["reply"] = conn.api(cmd, timeout=20).strip()
+            finally:
+                conn.close()
+        except Fail as exc:
+            rec["reply"] = "-ERR harness: " + exc.message
+        rec["t_reply"] = time.time()
+        rec["origination_done"] = True
+
+    def is_done(self, rec):
+        if not rec.get("origination_done"):
+            return False
+        if rec["reply"].startswith("-ERR"):
+            return True
+        return "t_hangup" in rec
+
+    # -- helpers -----------------------------------------------------------
+    def kill_ours(self, reason="NORMAL_CLEARING"):
+        """Kill only UUIDs this run generated that are still alive."""
+        killed = 0
+        try:
+            conn = Conn(timeout=5)
+        except Fail:
+            return killed
+        try:
+            for uuid, rec in list(self.calls.items()):
+                if "t_hangup" in rec or not uuid.startswith("lab-" + self.a.run_id + "-"):
+                    continue
+                try:
+                    if conn.api("uuid_kill %s %s" % (uuid, reason), 5).startswith("+OK"):
+                        killed += 1
+                except Fail:
+                    pass
+        finally:
+            conn.close()
+        return killed
+
+    def run_batch(self, batch_no, deadline_at):
+        a = self.a
+        recs = []
+        threads = []
+        for i in range(a.calls):
+            if self.aborted:
+                break
+            uuid = "lab-%s-%d-%d" % (a.run_id, batch_no, i + 1)
+            rec = {"uuid": uuid, "batch": batch_no, "index": i + 1}
+            with self.lock:
+                self.calls[uuid] = rec
+            recs.append(rec)
+            th = threading.Thread(target=self.originate, args=(rec,), daemon=True)
+            th.start()
+            threads.append(th)
+            if i + 1 < a.calls:
+                time.sleep(1.0 / a.ramp)
+        while not self.aborted and time.monotonic() < deadline_at:
+            self.check_stop()
+            with self.lock:
+                if all(self.is_done(r) for r in recs):
+                    break
+            time.sleep(0.1)
+        for th in threads:
+            th.join(timeout=1)
+        return recs
+
+    def check_stop(self):
+        if os.path.exists(stop_file(self.a.run_id)):
+            self.aborted = True
+
+    def classify(self, rec):
+        reply = rec.get("reply", "")
+        if rec.get("harness_killed"):
+            return "STUCK_KILLED"
+        if reply.startswith("-ERR"):
+            return "FAILED"
+        if reply.startswith("+OK") and "t_answer" in rec and "t_hangup" in rec:
+            cause = rec.get("hangup_cause")
+            if cause == "NORMAL_CLEARING":
+                return "COMPLETED"
+            if cause == "ALLOTTED_TIMEOUT":
+                return "TIMED_OUT"
+            return "UNEXPECTED_CAUSE"
+        return "INCOMPLETE"
+
+
+def summarize(run, started, ended, killed_extra):
+    a = run.a
+    out = {"run_id": a.run_id, "scenario": a.scenario,
+           "params": {"calls": a.calls, "hold_s": a.hold, "duration_s": a.duration, "ramp_per_s": a.ramp,
+                      "pause_s": a.pause, "max_batches": a.max_batches},
+           "started": started["iso"], "ended": ended["iso"],
+           "started_epoch": round(started["epoch"], 3), "ended_epoch": round(ended["epoch"], 3),
+           "elapsed_s": round(ended["epoch"] - started["epoch"], 2)}
+    calls = []
+    counts = {"initiated": 0, "answered": 0, "hangup_seen": 0}
+    outcomes = {}
+    for rec in sorted(run.calls.values(), key=lambda r: (r["batch"], r["index"])):
+        oc = run.classify(rec)
+        outcomes[oc] = outcomes.get(oc, 0) + 1
+        counts["initiated"] += 1
+        counts["answered"] += 1 if "t_answer" in rec else 0
+        counts["hangup_seen"] += 1 if "t_hangup" in rec else 0
+        dur = None
+        if "t_answer" in rec and "t_hangup" in rec:
+            dur = round(rec["t_hangup"] - rec["t_answer"], 2)
+        calls.append({"uuid": rec["uuid"], "batch": rec["batch"], "outcome": oc,
+                      "originate_reply": rec.get("reply"), "hangup_cause": rec.get("hangup_cause"),
+                      "answered": "t_answer" in rec, "answered_duration_s": dur, "bound_s": rec.get("bound_s")})
+    out["counters"] = counts
+    out["counters"]["completed"] = outcomes.get("COMPLETED", 0)
+    out["counters"]["timed_out"] = outcomes.get("TIMED_OUT", 0)
+    out["counters"]["failed"] = outcomes.get("FAILED", 0)
+    out["outcomes"] = outcomes
+    out["calls"] = calls
+    out["killed_by_harness"] = killed_extra
+    return out
+
+
+EXPECTED = {"single": "COMPLETED", "concurrent": "COMPLETED", "normal": "COMPLETED",
+            "timeout": "TIMED_OUT", "fail": "FAILED"}
+
+
+def stop_file(run_id):
+    return "/tmp/lab-load-%s.stop" % run_id
+
+
+def cleanup_prefix(run_id, signal_stop=True):
+    """Kill channels whose UUID begins lab-<run_id>- (and nothing else). Returns (killed, remaining)."""
+    prefix = "lab-%s-" % run_id
+    if signal_stop:                        # tells a still-running generator for this run to stop
+        try:
+            open(stop_file(run_id), "w").close()
+        except OSError:
+            pass
+    conn = Conn(timeout=5)
+    killed = 0
+    try:
+        rows = json.loads(conn.api("show channels as json", 10) or "{}").get("rows", [])
+        for row in rows:
+            uuid = row.get("uuid", "")
+            if uuid.startswith(prefix):
+                if conn.api("uuid_kill %s NORMAL_CLEARING" % uuid, 5).startswith("+OK"):
+                    killed += 1
+        time.sleep(1.0)
+        rows = json.loads(conn.api("show channels as json", 10) or "{}").get("rows", [])
+        remaining = [r["uuid"] for r in rows if r.get("uuid", "").startswith(prefix)]
+    finally:
+        conn.close()
+    if signal_stop:                        # give the generator time to notice, then tidy up
+        time.sleep(2.0)
+        try:
+            os.remove(stop_file(run_id))
+        except OSError:
+            pass
+    return killed, remaining
+
+
+def main(argv):
+    p = argparse.ArgumentParser(prog="esl-load", add_help=True)
+    p.add_argument("--scenario", default="single")
+    p.add_argument("--run-id")
+    p.add_argument("--calls", type=int)
+    p.add_argument("--hold", type=int, default=5)
+    p.add_argument("--duration", type=int, default=0)
+    p.add_argument("--ramp", type=float, default=2.0)
+    p.add_argument("--pause", type=int, default=0)
+    p.add_argument("--max-batches", type=int, default=1)
+    p.add_argument("--allow-high", action="store_true")
+    p.add_argument("--cleanup", metavar="RUN_ID", help="kill leftover channels of one earlier run")
+    try:
+        a = p.parse_args(argv)
+    except SystemExit as exc:
+        return 4 if exc.code else 0
+
+    try:
+        if a.cleanup:
+            if not RUN_ID_RE.match(a.cleanup):
+                raise Fail(4, "invalid run id")
+            killed, remaining = cleanup_prefix(a.cleanup)
+            print(json.dumps({"cleanup_run_id": a.cleanup, "killed": killed, "remaining": remaining}))
+            return 5 if remaining else 0
+        validate(a)
+    except Fail as exc:
+        sys.stderr.write("esl-load: %s\n" % exc.message)
+        return exc.code if exc.code in (2, 3, 4) else 1
+
+    run = Run(a)
+    run.listening = threading.Event()
+    try:
+        os.remove(stop_file(a.run_id))
+    except OSError:
+        pass
+    started = {"iso": now_iso(), "epoch": time.time()}
+    rc = 0
+
+    def on_signal(signum, _frame):
+        run.aborted = True
+        log("signal %d received: aborting and cleaning up own calls" % signum)
+
+    signal.signal(signal.SIGINT, on_signal)
+    signal.signal(signal.SIGTERM, on_signal)
+
+    listener = threading.Thread(target=run.listen, daemon=True)
+    listener.start()
+    run.listening.wait(timeout=8)
+    if run.ev_error:
+        sys.stderr.write("esl-load: cannot subscribe to events: %s\n" % run.ev_error)
+        return 3
+
+    log("run %s scenario=%s calls=%d hold=%ds duration=%ds ramp=%s/s pause=%ds" %
+        (a.run_id, a.scenario, a.calls, a.hold, a.duration, a.ramp, a.pause))
+    killed_extra = 0
+    try:
+        if a.scenario == "idle":
+            end = time.monotonic() + a.duration
+            while time.monotonic() < end and not run.aborted:
+                run.check_stop()
+                time.sleep(0.2)
+        else:
+            ramp_time = (a.calls - 1) / a.ramp
+            batch_est = ramp_time + a.hold + 2.0
+            if a.duration == 0:
+                batches = 1
+            else:
+                batches = max(1, min(a.max_batches, int(a.duration // (batch_est + a.pause))))
+            if batches * a.calls > HARD_MAX_TOTAL_CALLS:
+                batches = max(1, HARD_MAX_TOTAL_CALLS // a.calls)
+            log("plan: %d batch(es) x %d call(s), ~%.1fs per batch" % (batches, a.calls, batch_est))
+            for b in range(1, batches + 1):
+                if run.aborted:
+                    break
+                deadline = time.monotonic() + batch_est + 15.0
+                recs = run.run_batch(b, deadline)
+                # anything still alive after the batch deadline is killed (our own UUIDs only)
+                stuck = [r for r in recs if not run.is_done(r)]
+                if stuck:
+                    for r in stuck:
+                        r["harness_killed"] = True
+                    killed_extra += run.kill_ours()
+                    rc = 1
+                tally = {}
+                for r in recs:
+                    tally[run.classify(r)] = tally.get(run.classify(r), 0) + 1
+                log("batch %d done: %s" % (b, ", ".join("%s=%d" % kv for kv in sorted(tally.items())) or "no calls"))
+                if b < batches and a.pause and not run.aborted:
+                    time.sleep(a.pause)
+    finally:
+        if run.aborted:
+            killed_extra += run.kill_ours()
+            rc = 1
+        time.sleep(0.5)           # let trailing hangup events arrive
+        run.stop.set()
+        listener.join(timeout=3)
+
+    ended = {"iso": now_iso(), "epoch": time.time()}
+    summary = summarize(run, started, ended, killed_extra)
+
+    if a.scenario in EXPECTED:
+        want = EXPECTED[a.scenario]
+        got = summary["outcomes"]
+        bad = {k: v for k, v in got.items() if k != want}
+        summary["expected_outcome"] = want
+        if bad or got.get(want, 0) != len(summary["calls"]) or not summary["calls"]:
+            rc = 1
+            summary["mismatch"] = bad or got
+    if run.ev_error:
+        summary["event_listener_error"] = run.ev_error
+        rc = 1
+
+    # post-run residue check for this run's UUIDs only
+    if a.scenario != "idle":
+        try:
+            killed, remaining = cleanup_prefix(a.run_id, signal_stop=False)
+            summary["cleanup"] = {"killed_at_end": killed, "remaining": remaining}
+            if remaining:
+                rc = 5
+        except Fail as exc:
+            summary["cleanup"] = {"error": exc.message}
+            rc = 1
+    summary["exit_code"] = rc
+    try:
+        os.remove(stop_file(a.run_id))
+    except OSError:
+        pass
+    c = summary["counters"]
+    log("SUMMARY run=%s scenario=%s elapsed=%.1fs initiated=%d answered=%d completed=%d timed_out=%d failed=%d "
+        "outcomes=%s residual_channels=%s exit=%d" % (
+            a.run_id, a.scenario, summary["elapsed_s"], c["initiated"], c["answered"], c["completed"],
+            c["timed_out"], c["failed"], json.dumps(summary["outcomes"], sort_keys=True),
+            len(summary.get("cleanup", {}).get("remaining", [])), rc))
+    for call in summary["calls"]:
+        log("  %-22s %-12s reply=%-28s cause=%-20s answered_for=%ss bound=%ss" % (
+            call["uuid"], call["outcome"], call["originate_reply"], call["hangup_cause"],
+            call["answered_duration_s"], call["bound_s"]))
+    print("RESULT_JSON " + json.dumps(summary))
+    return rc
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except Fail as exc:
+        sys.stderr.write("esl-load: %s\n" % exc.message)
+        sys.exit(exc.code if exc.code in (2, 3, 4) else 1)
+    except Exception as exc:  # never print str(exc)
+        sys.stderr.write("esl-load: unexpected %s\n" % type(exc).__name__)
+        sys.exit(1)

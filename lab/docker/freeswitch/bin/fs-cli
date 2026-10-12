@@ -1,0 +1,15 @@
+#!/bin/sh
+# fs_cli wrapper: reads the ESL password from $ESL_PASSWORD_FILE and hands it to fs_cli through a
+# private temporary config file, so it never appears in process arguments.
+# Usage: fs-cli [fs_cli args, e.g. -x "status"]
+set -eu
+: "${ESL_PASSWORD_FILE:?ESL_PASSWORD_FILE is not set}"
+umask 077
+dir=$(mktemp -d)
+trap 'rm -rf "$dir"' EXIT INT TERM
+{
+  printf '[default]\nhost => 127.0.0.1\nport => 8021\npassword => '
+  tr -d '\r\n' < "$ESL_PASSWORD_FILE"
+  printf '\n'
+} > "$dir/.fs_cli_conf"
+HOME="$dir" fs_cli "$@"

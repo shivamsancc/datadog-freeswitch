@@ -3,7 +3,7 @@ name: datadog-freeswitch
 services:
   freeswitch:
     build:
-      context: docker/freeswitch
+      context: lab/docker/freeswitch
       args:
         FS_VERSION: "1.10.12"
     image: datadog-freeswitch-lab/freeswitch:1.10.12
@@ -16,7 +16,7 @@ services:
     secrets:
       - esl_password
     volumes:
-      - ./docker/freeswitch/conf:/usr/local/freeswitch/conf:ro
+      - ./lab/docker/freeswitch/conf:/usr/local/freeswitch/conf:ro
       - freeswitch-log:/usr/local/freeswitch/log
       - freeswitch-db:/usr/local/freeswitch/db
     ports:

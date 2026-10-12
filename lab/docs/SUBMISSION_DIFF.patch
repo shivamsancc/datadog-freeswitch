@@ -1,0 +1,2683 @@
+diff --git a/.github/CODEOWNERS b/.github/CODEOWNERS
+index 7c1d71f..cef2c6c 100644
+--- a/.github/CODEOWNERS
++++ b/.github/CODEOWNERS
+@@ -87,6 +87,7 @@ code-coverage.datadog.yml                                  @DataDog/agent-integr
+ /fluentbit/                              @zhenyami @DataDog/ecosystems-review
+ /flume/                                  @KealanMaas @DataDog/ecosystems-review
+ /fluxcd/                                 @DataDog/agent-integrations
++/freeswitch/                             @shivamsancc @DataDog/ecosystems-review
+ /gatekeeper/                             @arapulido ara.pulido@datadoghq.com @DataDog/ecosystems-review
+ /gigamon/                                @Mrudula-Oruganti-Gigamon @DataDog/ecosystems-review
+ /gitea/                                  @FlorentClarret @DataDog/ecosystems-review
+diff --git a/.github/workflows/test-all.yml b/.github/workflows/test-all.yml
+index 32d5232..3244d91 100644
+--- a/.github/workflows/test-all.yml
++++ b/.github/workflows/test-all.yml
+@@ -405,6 +405,25 @@ jobs:
+       test-py3: ${{ inputs.test-py3 }}
+       setup-env-vars: "${{ inputs.setup-env-vars }}"
+     secrets: inherit
++  jd874440:
++    uses: DataDog/integrations-core/.github/workflows/test-target.yml@5f6b58dfb609ea0afb37762612dbb6e2c37d2933
++    with:
++      job-name: FreeSWITCH
++      target: freeswitch
++      platform: linux
++      runner: '["ubuntu-22.04"]'
++      repo: "${{ inputs.repo }}"
++      context: ${{ inputs.context }}
++      python-version: "${{ inputs.python-version }}"
++      latest: ${{ inputs.latest }}
++      agent-image: "${{ inputs.agent-image }}"
++      agent-image-py2: "${{ inputs.agent-image-py2 }}"
++      agent-image-windows: "${{ inputs.agent-image-windows }}"
++      agent-image-windows-py2: "${{ inputs.agent-image-windows-py2 }}"
++      test-py2: ${{ inputs.test-py2 }}
++      test-py3: ${{ inputs.test-py3 }}
++      setup-env-vars: "${{ inputs.setup-env-vars }}"
++    secrets: inherit
+   jb4053fb:
+     uses: DataDog/integrations-core/.github/workflows/test-target.yml@5f6b58dfb609ea0afb37762612dbb6e2c37d2933
+     with:
+diff --git a/freeswitch/CHANGELOG.md b/freeswitch/CHANGELOG.md
+new file mode 100644
+index 0000000..167f263
+--- /dev/null
++++ b/freeswitch/CHANGELOG.md
+@@ -0,0 +1,7 @@
++# CHANGELOG - FreeSWITCH
++
++## Unreleased
++
++***Added***:
++
++* Add the FreeSWITCH check: availability, uptime, active channel count and collection diagnostics over the Event Socket.
+diff --git a/freeswitch/README.md b/freeswitch/README.md
+new file mode 100644
+index 0000000..dc7b8ff
+--- /dev/null
++++ b/freeswitch/README.md
+@@ -0,0 +1,180 @@
++# Agent Check: FreeSWITCH
++
++## Overview
++
++This check monitors a [FreeSWITCH][1] server through the Datadog Agent. It connects to the FreeSWITCH Event Socket (ESL)
++and reports the availability, uptime and channel count of the server.
++
++The check only runs two read-only commands, `uptime s` and `show channels count`, and does not subscribe to events.
++
++## Setup
++
++Follow the instructions below to install and configure this check for an Agent running on a Linux host. For containerized
++environments, see the [Autodiscovery integration templates][2] for guidance on applying these instructions.
++
++### Requirements
++
++- A Datadog Agent whose embedded Python is 3.13 or later (current Agent 7 releases), on Linux.
++- FreeSWITCH with `mod_event_socket` enabled. Tested with FreeSWITCH 1.10.12.
++- A network path from the Agent to the Event Socket port (default `8021`). The Event Socket is plain TCP: keep it on loopback
++  or a private network and restrict it with an ACL.
++
++### Installation
++
++The FreeSWITCH check is not included in the [Datadog Agent][3] package. Install it as a community integration, following
++[Use community integrations][4]:
++
++```shell
++sudo -u dd-agent -- datadog-agent integration install -t datadog-freeswitch==<VERSION>
++```
++
++To install a wheel that you built locally instead, run `sudo -u dd-agent -- datadog-agent integration install -w <PATH_TO_WHEEL>`.
++Restart the Agent after installing.
++
++### FreeSWITCH configuration
++
++Use a dedicated directory user for the check rather than the shared Event Socket password. Add a file such as
++`conf/directory/datadog.xml` (the domain name and secret below are placeholders):
++
++```xml
++<include>
++  <domain name="monitoring.local">
++    <users>
++      <user id="datadog">
++        <params>
++          <param name="esl-password" value="<SECRET>"/>
++          <param name="esl-allowed-api" value="uptime,show"/>
++          <param name="esl-allowed-events" value=""/>
++          <param name="esl-allowed-log" value="false"/>
++        </params>
++      </user>
++    </users>
++  </domain>
++</include>
++```
++
++Then reload the directory with `fs_cli -x reloadxml`.
++
++What this does and does not guarantee:
++
++- When `username` is set, the check uses FreeSWITCH `userauth` and **refuses the account unless FreeSWITCH reports
++  `Allowed-API` as exactly `uptime` and `show`**. An account with no `esl-allowed-api` (reported as `all`), or with extra
++  commands, is rejected with `error_type:auth` before any command is sent. The check never falls back to the shared password.
++- FreeSWITCH matches `esl-allowed-api` on the **first word** of a command only. `uptime,show` therefore allows every `uptime`
++  and every `show` subcommand, not just `uptime s` and `show channels count`. `show` is read-only, but some subcommands
++  list channel UUIDs and caller details. The check itself only ever sends the two commands above.
++- Without `username`, the check authenticates with the shared Event Socket password. That password allows full control of
++  FreeSWITCH, including running system commands, and the check cannot tell how it is limited.
++
++### Configuration
++
++1. Create `/etc/datadog-agent/conf.d/freeswitch.d/conf.yaml` (see the [sample freeswitch.d/conf.yaml][5] for all options):
++
++   ```yaml
++   init_config:
++
++   instances:
++     - host: 127.0.0.1
++       port: 8021
++       username: datadog@monitoring.local
++       password: ENC[freeswitch_esl_password]
++       connect_timeout: 3
++       read_timeout: 3
++       tags:
++         - pbx:primary
++   ```
++
++2. Protect the password with the Agent's [secrets management][10] rather than writing it in plain text. For example, with the
++   file backend, put `{"freeswitch_esl_password": "<SECRET>"}` in a file readable only by `dd-agent` and add this to `datadog.yaml`:
++
++   ```yaml
++   secret_backend_type: file.json
++   secret_backend_config:
++     file_path: /etc/datadog-agent/secrets.json
++   ```
++
++3. [Restart the Agent][6].
++
++| Option | Required | Default | Notes |
++|---|---|---|---|
++| `host` | yes | | Use an IP address where possible (see below) |
++| `port` | no | `8021` | |
++| `username` | no | | `user@domain` for `userauth` |
++| `password` | yes | | Shared password, or the user's `esl-password` when `username` is set |
++| `connect_timeout` | no | `3` | Seconds, `0.1` to `30` |
++| `read_timeout` | no | `3` | Seconds per response, `0.1` to `30` |
++| `tags` | no | | Added to every metric |
++| `min_collection_interval` | no | `15` | A run is capped at 90% of this value |
++
++Each run makes one TCP connection (reused between runs) and two requests. A run's total time is limited to
++`connect_timeout + 2 x read_timeout`, and to 90% of `min_collection_interval`.
++
++**Host names.** An IP address is connected to directly. A host name is resolved by the operating system, which the check
++cannot interrupt, so a slow DNS server can delay a run past the configured timeouts (the check does not connect after its deadline).
++Use a host name only where DNS behavior is predictable, or use an IP address.
++
++### Validation
++
++1. Check the loaded and (redacted) configuration:
++
++   ```shell
++   sudo -u dd-agent -- datadog-agent configcheck
++   ```
++
++   The password is shown as `********`.
++
++2. Run the check once:
++
++   ```shell
++   sudo -u dd-agent -- datadog-agent check freeswitch
++   ```
++
++   Expect `freeswitch.can_connect` of `1`, `freeswitch.collection.errors` of `0`, and values for `freeswitch.uptime` and
++   `freeswitch.channels.active`.
++
++3. [Run the Agent's status subcommand][7] and look for `freeswitch` under the Checks section.
++
++## Data collected
++
++### Metrics
++
++See [metadata.csv][8] for a list of metrics provided by this integration.
++
++`freeswitch.channels.active` counts channels, not calls. A bridged call usually has two or more channels.
++
++When a run fails, `freeswitch.can_connect` is `0`, `freeswitch.collection.errors` is `1` with an `error_type` tag, and no uptime or
++channel value is reported for that run. `freeswitch.collection.duration` is always reported.
++
++### Events
++
++The FreeSWITCH integration does not include any events.
++
++### Service checks
++
++The FreeSWITCH integration does not include any service checks.
++
++## Troubleshooting
++
++Look at the Agent log for `FreeSWITCH collection on <host>:<port> failed`. The first failure and each change of error type is
++logged as a warning; repeats of the same failure are logged at debug level, and recovery is logged at info level.
++
++| `error_type` | Meaning | What to check |
++|---|---|---|
++| `connect` | Could not connect, the name did not resolve, or the server closed the connection | Host and port, firewall, FreeSWITCH is running, `mod_event_socket` is loaded, the Agent's address is allowed by the `apply-inbound-acl` ACL (FreeSWITCH closes the connection when it is not) |
++| `timeout` | No complete response within the timeouts | Network latency or a stalled server; raise `read_timeout` modestly; check the FreeSWITCH load |
++| `auth` | Authentication or permission was refused | Password and `username` (`user@domain`) are correct; for `userauth` accounts the `Allowed-API` must be exactly `uptime,show` (the log line says when the account is not restricted); the user's domain exists after `reloadxml` |
++| `protocol` | The reply was not valid ESL, an unexpected type, or an error reply | The port is really the FreeSWITCH Event Socket; a proxy is not rewriting traffic |
++| `parse` | A well-formed reply that is not the expected number | FreeSWITCH version differences; open an issue with the (non-sensitive) command output |
++
++Need help? Open an issue on the [integrations-extras repository][9].
++
++[1]: https://signalwire.com/freeswitch
++[2]: https://docs.datadoghq.com/containers/kubernetes/integrations/
++[3]: https://app.datadoghq.com/account/settings/agent/latest
++[4]: https://docs.datadoghq.com/agent/guide/use-community-integrations/
++[5]: https://github.com/DataDog/integrations-extras/blob/master/freeswitch/datadog_checks/freeswitch/data/conf.yaml.example
++[6]: https://docs.datadoghq.com/agent/configuration/agent-commands/#start-stop-and-restart-the-agent
++[7]: https://docs.datadoghq.com/agent/configuration/agent-commands/#agent-status-and-information
++[8]: https://github.com/DataDog/integrations-extras/blob/master/freeswitch/metadata.csv
++[9]: https://github.com/DataDog/integrations-extras/issues
++[10]: https://docs.datadoghq.com/agent/configuration/secrets-management/
+diff --git a/freeswitch/assets/configuration/spec.yaml b/freeswitch/assets/configuration/spec.yaml
+new file mode 100644
+index 0000000..66f5203
+--- /dev/null
++++ b/freeswitch/assets/configuration/spec.yaml
+@@ -0,0 +1,64 @@
++name: FreeSWITCH
++files:
++- name: freeswitch.yaml
++  options:
++  - template: init_config
++    options:
++    - template: init_config/default
++  - template: instances
++    options:
++    - name: host
++      required: true
++      description: |
++        The IP address or hostname of the FreeSWITCH server's Event Socket (ESL) listener. Prefer an IP address:
++        a hostname is resolved by the operating system, which the check cannot interrupt.
++      value:
++        type: string
++        example: 127.0.0.1
++    - name: port
++      description: |
++        The TCP port of the FreeSWITCH Event Socket listener (`listen-port` in `event_socket.conf`).
++      value:
++        type: integer
++        minimum: 1
++        maximum: 65535
++        example: 8021
++        display_default: 8021
++    - name: username
++      description: |
++        Optional FreeSWITCH directory user, in the form `user@domain`. If set, the check authenticates with
++        `userauth`, `password` is that user's `esl-password`, and the check refuses the account unless FreeSWITCH
++        reports its `esl-allowed-api` as exactly `uptime,show`. It never falls back to the shared password.
++        If not set, `password` is the shared Event Socket password, which grants full control of FreeSWITCH.
++      value:
++        type: string
++        example: <USER>@<DOMAIN>
++    - name: password
++      required: true
++      secret: true
++      description: |
++        The Event Socket password, or the `esl-password` of `username` if a username is set.
++        Use the Agent's secrets management, for example `ENC[<HANDLE>]`, rather than plain text.
++      value:
++        type: string
++        example: <PASSWORD>
++    - name: connect_timeout
++      description: |
++        The number of seconds to wait for the TCP connection to FreeSWITCH to be established.
++      value:
++        type: number
++        minimum: 0.1
++        maximum: 30
++        example: 3
++        display_default: 3
++    - name: read_timeout
++      description: |
++        The number of seconds to wait for each response from FreeSWITCH.
++      value:
++        type: number
++        minimum: 0.1
++        maximum: 30
++        example: 3
++        display_default: 3
++    - template: instances/tags
++    - template: instances/global
+diff --git a/freeswitch/datadog_checks/freeswitch/__about__.py b/freeswitch/datadog_checks/freeswitch/__about__.py
+new file mode 100644
+index 0000000..e50f43a
+--- /dev/null
++++ b/freeswitch/datadog_checks/freeswitch/__about__.py
+@@ -0,0 +1,4 @@
++# (C) Datadog, Inc. 2026-present
++# All rights reserved
++# Licensed under a 3-clause BSD style license (see LICENSE)
++__version__ = '0.0.1'
+diff --git a/freeswitch/datadog_checks/freeswitch/__init__.py b/freeswitch/datadog_checks/freeswitch/__init__.py
+new file mode 100644
+index 0000000..3199bf4
+--- /dev/null
++++ b/freeswitch/datadog_checks/freeswitch/__init__.py
+@@ -0,0 +1,7 @@
++# (C) Datadog, Inc. 2026-present
++# All rights reserved
++# Licensed under a 3-clause BSD style license (see LICENSE)
++from .__about__ import __version__
++from .check import FreeswitchCheck
++
++__all__ = ['__version__', 'FreeswitchCheck']
+diff --git a/freeswitch/datadog_checks/freeswitch/check.py b/freeswitch/datadog_checks/freeswitch/check.py
+new file mode 100644
+index 0000000..2e69d8b
+--- /dev/null
++++ b/freeswitch/datadog_checks/freeswitch/check.py
+@@ -0,0 +1,157 @@
++# (C) Datadog, Inc. 2026-present
++# All rights reserved
++# Licensed under a 3-clause BSD style license (see LICENSE)
++from __future__ import annotations
++
++import time
++from typing import Any
++
++from datadog_checks.base import AgentCheck, ConfigurationError
++from datadog_checks.base.types import InitConfigType, InstanceType
++
++from .config_models import ConfigMixin
++from .esl import CMD_CHANNELS, CMD_UPTIME, EslAuthError, EslClient, EslError, parse_channels, parse_uptime
++
++DEFAULT_COLLECTION_INTERVAL = 15.0
++# While a failure persists with the same error_type, warn again only this often (seconds).
++LOG_REMINDER_SECONDS = 900.0
++
++
++class FreeswitchCheck(AgentCheck, ConfigMixin):
++    # This will be the prefix of every metric the integration sends
++    __NAMESPACE__ = 'freeswitch'
++
++    def __init__(self, name: str, init_config: InitConfigType, instances: list[InstanceType]) -> None:
++        super().__init__(name, init_config, instances)
++        self._client: EslClient | None = None
++        self._base_tags: list[str] = []
++        self._run_budget = 9.0
++        self._consecutive_failures = 0
++        self._last_error_type: str | None = None
++        self._last_warning = 0.0
++        # Runs after the generated configuration models are loaded.
++        self.check_initializations.append(self._configure)
++
++    def _configure(self) -> None:
++        config = self.config
++        connect_timeout = float(config.connect_timeout if config.connect_timeout is not None else 3.0)
++        read_timeout = float(config.read_timeout if config.read_timeout is not None else 3.0)
++        port = config.port if config.port is not None else 8021
++        try:
++            self._client = EslClient(
++                host=config.host,
++                port=port,
++                password=config.password,
++                username=config.username,
++                connect_timeout=connect_timeout,
++                read_timeout=read_timeout,
++            )
++        except ValueError as e:
++            # The message is fixed text and never contains the credential values.
++            raise ConfigurationError(str(e)) from None
++
++        # The whole run (connect, authenticate, both commands, one possible reconnect) must finish
++        # before the next scheduled run.
++        interval: Any = (
++            self.instance.get('min_collection_interval')
++            or self.init_config.get('min_collection_interval')
++            or DEFAULT_COLLECTION_INTERVAL
++        )
++        self._run_budget = min(connect_timeout + 2 * read_timeout, float(interval) * 0.9)
++
++        self._base_tags = ['freeswitch_host:{}'.format(config.host), 'freeswitch_port:{}'.format(port)]
++        self._base_tags.extend(config.tags or [])
++
++    def check(self, _: InstanceType) -> None:
++        start = time.monotonic()
++        error_type = None
++        reason = ''
++        uptime = channels = 0
++        try:
++            uptime, channels = self._collect(start + self._run_budget)
++        except EslError as e:
++            error_type = e.error_type
++            reason = str(e)  # always a fixed message; never server text or credentials
++        except BaseException:
++            # A defect or an interrupt: the stream state is unknown, so do not reuse it.
++            self._discard()
++            raise
++        duration = time.monotonic() - start
++        self._log_outcome(error_type, reason)
++
++        tags = self._base_tags
++        if error_type is None:
++            self.gauge('uptime', uptime, tags=tags)
++            self.gauge('channels.active', channels, tags=tags)
++            self.gauge('can_connect', 1, tags=tags)
++            self.count('collection.errors', 0, tags=tags)
++        else:
++            self.gauge('can_connect', 0, tags=tags)
++            self.count('collection.errors', 1, tags=tags + ['error_type:{}'.format(error_type)])
++        self.gauge('collection.duration', duration, tags=tags)
++
++    def _log_outcome(self, error_type: str | None, reason: str = '') -> None:
++        """Warn on the first failure and on a change of error type, remind rarely, report recovery.
++
++        Only fixed text, the host/port from the configuration and the bounded error type are logged.
++        """
++        target = '{}:{}'.format(self.config.host, self.config.port if self.config.port is not None else 8021)
++        if error_type is None:
++            if self._consecutive_failures:
++                self.log.info(
++                    'FreeSWITCH collection on %s recovered after %d failed run(s)',
++                    target,
++                    self._consecutive_failures,
++                )
++            self._consecutive_failures = 0
++            self._last_error_type = None
++            return
++
++        self._consecutive_failures += 1
++        now = time.monotonic()
++        changed = error_type != self._last_error_type
++        if changed or now - self._last_warning >= LOG_REMINDER_SECONDS:
++            self._last_warning = now
++            self.log.warning(
++                'FreeSWITCH collection on %s failed (error_type=%s, consecutive_failures=%d): %s',
++                target,
++                error_type,
++                self._consecutive_failures,
++                reason,
++            )
++        else:
++            self.log.debug(
++                'FreeSWITCH collection on %s still failing (error_type=%s, consecutive_failures=%d)',
++                target,
++                error_type,
++                self._consecutive_failures,
++            )
++        self._last_error_type = error_type
++
++    def _discard(self) -> None:
++        if self._client is not None:
++            self._client.close()
++
++    def _collect(self, deadline: float) -> tuple[int, int]:
++        client = self._client
++        if client is None:
++            raise ConfigurationError('check is not configured')
++
++        # A reused connection that the server closed in the meantime is replaced up front. If it dies
++        # during the exchange anyway, exactly one fresh connection is tried within the same run.
++        if client.connected and not client.is_stale():
++            try:
++                return self._query(client, deadline)
++            except EslAuthError:
++                raise
++            except EslError:
++                pass  # the client closed itself, or the data was unusable; reconnect once below
++
++        client.connect(deadline)
++        return self._query(client, deadline)
++
++    @staticmethod
++    def _query(client: EslClient, deadline: float) -> tuple[int, int]:
++        uptime = parse_uptime(client.api(CMD_UPTIME, deadline))
++        channels = parse_channels(client.api(CMD_CHANNELS, deadline))
++        return uptime, channels
+diff --git a/freeswitch/datadog_checks/freeswitch/config_models/__init__.py b/freeswitch/datadog_checks/freeswitch/config_models/__init__.py
+new file mode 100644
+index 0000000..5c2bf5c
+--- /dev/null
++++ b/freeswitch/datadog_checks/freeswitch/config_models/__init__.py
+@@ -0,0 +1,20 @@
++# This file is autogenerated.
++# To change this file you should edit assets/configuration/spec.yaml and then run the following commands:
++#     ddev -x validate config -s <INTEGRATION_NAME>
++#     ddev -x validate models -s <INTEGRATION_NAME>
++
++from .instance import InstanceConfig
++from .shared import SharedConfig
++
++
++class ConfigMixin:
++    _config_model_instance: InstanceConfig
++    _config_model_shared: SharedConfig
++
++    @property
++    def config(self) -> InstanceConfig:
++        return self._config_model_instance
++
++    @property
++    def shared_config(self) -> SharedConfig:
++        return self._config_model_shared
+diff --git a/freeswitch/datadog_checks/freeswitch/config_models/defaults.py b/freeswitch/datadog_checks/freeswitch/config_models/defaults.py
+new file mode 100644
+index 0000000..c06009d
+--- /dev/null
++++ b/freeswitch/datadog_checks/freeswitch/config_models/defaults.py
+@@ -0,0 +1,24 @@
++# This file is autogenerated.
++# To change this file you should edit assets/configuration/spec.yaml and then run the following commands:
++#     ddev -x validate config -s <INTEGRATION_NAME>
++#     ddev -x validate models -s <INTEGRATION_NAME>
++
++
++def instance_connect_timeout():
++    return 3
++
++
++def instance_empty_default_hostname():
++    return False
++
++
++def instance_min_collection_interval():
++    return 15
++
++
++def instance_port():
++    return 8021
++
++
++def instance_read_timeout():
++    return 3
+diff --git a/freeswitch/datadog_checks/freeswitch/config_models/instance.py b/freeswitch/datadog_checks/freeswitch/config_models/instance.py
+new file mode 100644
+index 0000000..045ea00
+--- /dev/null
++++ b/freeswitch/datadog_checks/freeswitch/config_models/instance.py
+@@ -0,0 +1,51 @@
++# This file is autogenerated.
++# To change this file you should edit assets/configuration/spec.yaml and then run the following commands:
++#     ddev -x validate config -s <INTEGRATION_NAME>
++#     ddev -x validate models -s <INTEGRATION_NAME>
++
++from __future__ import annotations
++
++from typing import Optional
++
++from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
++
++from datadog_checks.base.utils.functions import identity
++from datadog_checks.base.utils.models import validation
++
++from . import defaults, validators
++
++
++class InstanceConfig(BaseModel):
++    model_config = ConfigDict(
++        validate_default=True,
++        arbitrary_types_allowed=True,
++        frozen=True,
++    )
++    connect_timeout: Optional[float] = Field(None, ge=0.1, le=30.0)
++    empty_default_hostname: Optional[bool] = None
++    host: str
++    min_collection_interval: Optional[float] = None
++    password: str
++    port: Optional[int] = Field(None, ge=1, le=65535)
++    read_timeout: Optional[float] = Field(None, ge=0.1, le=30.0)
++    tags: Optional[tuple[str, ...]] = None
++    username: Optional[str] = None
++
++    @model_validator(mode='before')
++    def _initial_validation(cls, values):
++        return validation.core.initialize_config(getattr(validators, 'initialize_instance', identity)(values))
++
++    @field_validator('*', mode='before')
++    def _validate(cls, value, info):
++        field = cls.model_fields[info.field_name]
++        field_name = field.alias or info.field_name
++        if field_name in info.context['configured_fields']:
++            value = getattr(validators, f'instance_{info.field_name}', identity)(value, field=field)
++        else:
++            value = getattr(defaults, f'instance_{info.field_name}', lambda: value)()
++
++        return validation.utils.make_immutable(value)
++
++    @model_validator(mode='after')
++    def _final_validation(cls, model):
++        return validation.core.check_model(getattr(validators, 'check_instance', identity)(model))
+diff --git a/freeswitch/datadog_checks/freeswitch/config_models/shared.py b/freeswitch/datadog_checks/freeswitch/config_models/shared.py
+new file mode 100644
+index 0000000..4017c43
+--- /dev/null
++++ b/freeswitch/datadog_checks/freeswitch/config_models/shared.py
+@@ -0,0 +1,41 @@
++# This file is autogenerated.
++# To change this file you should edit assets/configuration/spec.yaml and then run the following commands:
++#     ddev -x validate config -s <INTEGRATION_NAME>
++#     ddev -x validate models -s <INTEGRATION_NAME>
++
++from __future__ import annotations
++
++from typing import Optional
++
++from pydantic import BaseModel, ConfigDict, field_validator, model_validator
++
++from datadog_checks.base.utils.functions import identity
++from datadog_checks.base.utils.models import validation
++
++from . import validators
++
++
++class SharedConfig(BaseModel):
++    model_config = ConfigDict(
++        validate_default=True,
++        arbitrary_types_allowed=True,
++        frozen=True,
++    )
++    service: Optional[str] = None
++
++    @model_validator(mode='before')
++    def _initial_validation(cls, values):
++        return validation.core.initialize_config(getattr(validators, 'initialize_shared', identity)(values))
++
++    @field_validator('*', mode='before')
++    def _validate(cls, value, info):
++        field = cls.model_fields[info.field_name]
++        field_name = field.alias or info.field_name
++        if field_name in info.context['configured_fields']:
++            value = getattr(validators, f'shared_{info.field_name}', identity)(value, field=field)
++
++        return validation.utils.make_immutable(value)
++
++    @model_validator(mode='after')
++    def _final_validation(cls, model):
++        return validation.core.check_model(getattr(validators, 'check_shared', identity)(model))
+diff --git a/freeswitch/datadog_checks/freeswitch/config_models/validators.py b/freeswitch/datadog_checks/freeswitch/config_models/validators.py
+new file mode 100644
+index 0000000..5e48f02
+--- /dev/null
++++ b/freeswitch/datadog_checks/freeswitch/config_models/validators.py
+@@ -0,0 +1,13 @@
++# (C) Datadog, Inc. 2026-present
++# All rights reserved
++# Licensed under a 3-clause BSD style license (see LICENSE)
++
++# Here you can include additional config validators or transformers
++#
++# def initialize_instance(values, **kwargs):
++#     if 'my_option' not in values and 'my_legacy_option' in values:
++#         values['my_option'] = values['my_legacy_option']
++#     if values.get('my_number') > 10:
++#         raise ValueError('my_number max value is 10, got %s' % str(values.get('my_number')))
++#
++#     return values
+diff --git a/freeswitch/datadog_checks/freeswitch/data/conf.yaml.example b/freeswitch/datadog_checks/freeswitch/data/conf.yaml.example
+new file mode 100644
+index 0000000..903a2fe
+--- /dev/null
++++ b/freeswitch/datadog_checks/freeswitch/data/conf.yaml.example
+@@ -0,0 +1,71 @@
++## All options defined here are available to all instances.
++#
++init_config:
++
++    ## @param service - string - optional
++    ## Attach the tag `service:<SERVICE>` to every metric, event, and service check emitted by this integration.
++    ##
++    ## Additionally, this sets the default `service` for every log source.
++    #
++    # service: <SERVICE>
++
++## Every instance is scheduled independently of the others.
++#
++instances:
++
++    ## @param host - string - required
++    ## The IP address or hostname of the FreeSWITCH server's Event Socket (ESL) listener. Prefer an IP address:
++    ## a hostname is resolved by the operating system, which the check cannot interrupt.
++    #
++  - host: 127.0.0.1
++
++    ## @param port - integer - optional - default: 8021
++    ## The TCP port of the FreeSWITCH Event Socket listener (`listen-port` in `event_socket.conf`).
++    #
++    # port: 8021
++
++    ## @param username - string - optional
++    ## Optional FreeSWITCH directory user, in the form `user@domain`. If set, the check authenticates with
++    ## `userauth`, `password` is that user's `esl-password`, and the check refuses the account unless FreeSWITCH
++    ## reports its `esl-allowed-api` as exactly `uptime,show`. It never falls back to the shared password.
++    ## If not set, `password` is the shared Event Socket password, which grants full control of FreeSWITCH.
++    #
++    # username: <USER>@<DOMAIN>
++
++    ## @param password - string - required
++    ## The Event Socket password, or the `esl-password` of `username` if a username is set.
++    ## Use the Agent's secrets management, for example `ENC[<HANDLE>]`, rather than plain text.
++    #
++    password: <PASSWORD>
++
++    ## @param connect_timeout - number - optional - default: 3
++    ## The number of seconds to wait for the TCP connection to FreeSWITCH to be established.
++    #
++    # connect_timeout: 3
++
++    ## @param read_timeout - number - optional - default: 3
++    ## The number of seconds to wait for each response from FreeSWITCH.
++    #
++    # read_timeout: 3
++
++    ## @param tags - list of strings - optional
++    ## A list of tags to attach to every metric and service check emitted by this instance.
++    ##
++    ## Learn more about tagging at https://docs.datadoghq.com/tagging
++    #
++    # tags:
++    #   - <KEY_1>:<VALUE_1>
++    #   - <KEY_2>:<VALUE_2>
++
++    ## @param min_collection_interval - number - optional - default: 15
++    ## This changes the collection interval of the check. For more information, see:
++    ## https://docs.datadoghq.com/developers/write_agent_check/#collection-interval
++    #
++    # min_collection_interval: 15
++
++    ## @param empty_default_hostname - boolean - optional - default: false
++    ## This forces the check to send metrics with no hostname.
++    ##
++    ## This is useful for cluster-level checks.
++    #
++    # empty_default_hostname: false
+diff --git a/freeswitch/datadog_checks/freeswitch/esl.py b/freeswitch/datadog_checks/freeswitch/esl.py
+new file mode 100644
+index 0000000..1580ea9
+--- /dev/null
++++ b/freeswitch/datadog_checks/freeswitch/esl.py
+@@ -0,0 +1,377 @@
++# (C) Datadog, Inc. 2026-present
++# All rights reserved
++# Licensed under a 3-clause BSD style license (see LICENSE)
++"""A minimal, read-only FreeSWITCH Event Socket (ESL) inbound client.
++
++Deliberately narrow: it can authenticate and run the fixed commands in ``ALLOWED_COMMANDS``, nothing else.
++It never subscribes to events and never exposes generic command execution.
++
++Every raised error carries a fixed message. Passwords, authentication lines, commands and server text are
++never placed in exceptions.
++"""
++
++from __future__ import annotations
++
++import ipaddress
++import re
++import select
++import socket
++import time
++
++# The only commands this client will ever send, matched exactly.
++CMD_UPTIME = 'uptime s'
++CMD_CHANNELS = 'show channels count'
++ALLOWED_COMMANDS = frozenset({CMD_UPTIME, CMD_CHANNELS})
++
++MAX_HEADER_BYTES = 8 * 1024
++MAX_BODY_BYTES = 64 * 1024
++_RECV_SIZE = 4096
++_MAX_ADDRESSES = 4
++
++ERROR_CONNECT = 'connect'
++ERROR_TIMEOUT = 'timeout'
++ERROR_AUTH = 'auth'
++ERROR_PROTOCOL = 'protocol'
++ERROR_PARSE = 'parse'
++ERROR_TYPES = (ERROR_CONNECT, ERROR_TIMEOUT, ERROR_AUTH, ERROR_PROTOCOL, ERROR_PARSE)
++
++_DIGITS = re.compile(r'[0-9]+')
++_CHANNELS = re.compile(r'([0-9]+) total\.')
++_USERNAME = re.compile(r'[^\s@:]+@[^\s@:]+')
++
++# First words of the two commands above. FreeSWITCH's ``esl-allowed-api`` matches only the first word, so
++# this is the narrowest permission that can be expressed; it also admits every other ``show`` subcommand.
++REQUIRED_API_PERMISSIONS = frozenset({'uptime', 'show'})
++
++
++class EslError(Exception):
++    """Base class of operational errors. ``error_type`` is one of ``ERROR_TYPES``."""
++
++    error_type = ERROR_PROTOCOL
++
++
++class EslConnectError(EslError):
++    error_type = ERROR_CONNECT
++
++
++class EslTimeoutError(EslError):
++    error_type = ERROR_TIMEOUT
++
++
++class EslAuthError(EslError):
++    error_type = ERROR_AUTH
++
++
++class EslProtocolError(EslError):
++    error_type = ERROR_PROTOCOL
++
++
++class EslParseError(EslError):
++    error_type = ERROR_PARSE
++
++
++class EslCommandNotAllowed(ValueError):
++    """Raised before anything is sent. This is a programming error, not an operational one."""
++
++
++def _has_control_chars(value: str) -> bool:
++    return any(ord(c) < 0x20 or ord(c) == 0x7F for c in value)
++
++
++def validate_credentials(username: str | None, password: str) -> None:
++    """Raise ValueError (fixed message) when the credentials cannot be sent safely on one protocol line."""
++    if not password or _has_control_chars(password):
++        raise ValueError('password must be non-empty and must not contain control characters')
++    if username is not None:
++        if not _USERNAME.fullmatch(username) or _has_control_chars(username):
++            raise ValueError('username must have the form user@domain')
++
++
++def parse_uptime(body: bytes) -> int:
++    try:
++        text = body.decode('utf-8').strip()
++    except UnicodeDecodeError:
++        raise EslParseError('uptime response is not valid UTF-8') from None
++    if not _DIGITS.fullmatch(text) or not text.isascii():
++        raise EslParseError('uptime response has an unexpected format')
++    return int(text)
++
++
++def parse_channels(body: bytes) -> int:
++    try:
++        text = body.decode('utf-8').strip()
++    except UnicodeDecodeError:
++        raise EslParseError('channel count response is not valid UTF-8') from None
++    match = _CHANNELS.fullmatch(text)
++    if not match or not text.isascii():
++        raise EslParseError('channel count response has an unexpected format')
++    return int(match.group(1))
++
++
++class EslClient:
++    """One ESL connection. Not thread-safe; any error leaves the connection closed."""
++
++    def __init__(
++        self,
++        host: str,
++        port: int,
++        password: str,
++        username: str | None = None,
++        connect_timeout: float = 3.0,
++        read_timeout: float = 3.0,
++    ) -> None:
++        validate_credentials(username, password)
++        self._host = host
++        self._port = port
++        self._username = username
++        self._password = password
++        self._connect_timeout = connect_timeout
++        self._read_timeout = read_timeout
++        self._sock: socket.socket | None = None
++        self._buf = b''
++        self._raw_headers: dict[str, str] = {}
++        self._duplicate_headers: set[str] = set()
++
++    def __repr__(self) -> str:
++        return 'EslClient(host={!r}, port={!r}, connected={})'.format(self._host, self._port, self.connected)
++
++    @property
++    def connected(self) -> bool:
++        return self._sock is not None
++
++    def is_stale(self) -> bool:
++        """True if the peer closed the connection or sent unsolicited data since the last exchange."""
++        if self._sock is None:
++            return True
++        try:
++            readable, _, _ = select.select([self._sock], [], [], 0)
++        except (OSError, ValueError):
++            return True
++        return bool(readable)
++
++    def close(self) -> None:
++        sock, self._sock = self._sock, None
++        self._buf = b''
++        if sock is not None:
++            try:
++                sock.close()
++            except OSError:
++                pass
++
++    # -- connection -------------------------------------------------------------------------------------------
++
++    def connect(self, deadline: float) -> None:
++        """Connect and authenticate. ``deadline`` is a ``time.monotonic()`` value. Closes on any failure."""
++        self.close()
++        try:
++            self._connect_and_auth(deadline)
++        except BaseException:
++            self.close()
++            raise
++
++    def _connect_and_auth(self, deadline: float) -> None:
++        self._sock = self._open_socket(deadline)
++
++        headers, _ = self._read_message(deadline)
++        if headers.get('content-type') != 'auth/request':
++            raise EslProtocolError('unexpected greeting from server')
++
++        if self._username is not None:
++            line = 'userauth {}:{}'.format(self._username, self._password)
++        else:
++            line = 'auth {}'.format(self._password)
++        self._send(line, deadline)
++
++        headers, _ = self._read_message(deadline)
++        if headers.get('content-type') != 'command/reply':
++            raise EslProtocolError('unexpected authentication response type')
++        reply = headers.get('reply-text', '')
++        if reply.startswith('+OK'):
++            self._ensure_drained()
++            if self._username is not None:
++                self._require_restricted_account(headers)
++            return
++        if reply.startswith('-ERR'):
++            raise EslAuthError('authentication was rejected')
++        raise EslProtocolError('unexpected authentication reply')
++
++    def _require_restricted_account(self, headers: dict[str, str]) -> None:
++        """Fail closed unless the ``userauth`` account is advertised as limited to ``uptime`` and ``show``.
++
++        FreeSWITCH 1.10.12 answers a successful ``userauth`` with ``Allowed-API: <esl-allowed-api>`` (the value
++        used to build the permission list), or ``Allowed-API: all`` when the account has no restriction. The value
++        is only trusted when it is exactly the two expected first words, written exactly as the server formats it
++        (one space after the colon, no padding, no duplicates), because the server truncates the advertised line
++        to 512 bytes and padding could hide further entries.
++        """
++        value = headers.get('allowed-api')
++        raw = self._raw_headers.get('allowed-api')
++        if value is None or not value or raw != ' ' + value or 'allowed-api' in self._duplicate_headers:
++            raise EslAuthError('account is not restricted to the API commands this check uses')
++        # The server splits on a space if the value contains one, otherwise on a comma, and matches entries exactly.
++        entries = value.split(' ' if ' ' in value else ',')
++        if '' in entries or set(entries) != REQUIRED_API_PERMISSIONS:
++            raise EslAuthError('account is not restricted to the API commands this check uses')
++
++    def _open_socket(self, deadline: float) -> socket.socket:
++        """Open the TCP connection within ``connect_timeout`` and the run deadline.
++
++        An IP literal is connected to directly, so no name resolution can block. A host name goes through the
++        operating system resolver, which the standard library cannot interrupt (no threads or signals are used
++        here by design); the deadline is re-checked after resolution and no connection is attempted late.
++        """
++        try:
++            literal = ipaddress.ip_address(self._host.strip('[]'))
++        except ValueError:
++            literal = None
++
++        if literal is not None:
++            family = socket.AF_INET6 if literal.version == 6 else socket.AF_INET
++            targets: list[tuple[int, tuple]] = [(family, (str(literal), self._port))]
++        else:
++            if deadline - time.monotonic() <= 0:
++                raise EslTimeoutError('deadline exceeded before connecting')
++            try:
++                infos = socket.getaddrinfo(self._host, self._port, type=socket.SOCK_STREAM)
++            except OSError:
++                raise EslConnectError('could not resolve the FreeSWITCH host') from None
++            targets = [(info[0], info[4]) for info in infos[:_MAX_ADDRESSES]]
++
++        last: EslError = EslConnectError('could not connect to FreeSWITCH')
++        for target_family, address in targets:
++            timeout = min(self._connect_timeout, deadline - time.monotonic())
++            if timeout <= 0:
++                raise EslTimeoutError('deadline exceeded before connecting')
++            sock = socket.socket(target_family, socket.SOCK_STREAM)
++            try:
++                sock.settimeout(timeout)
++                sock.connect(address)
++                return sock
++            except TimeoutError:
++                sock.close()
++                last = EslTimeoutError('timed out connecting to FreeSWITCH')
++            except OSError:
++                sock.close()
++                last = EslConnectError('could not connect to FreeSWITCH')
++        raise last
++
++    # -- commands ---------------------------------------------------------------------------------------------
++
++    def api(self, command: str, deadline: float) -> bytes:
++        """Run one allowlisted API command and return the raw response body. Closes on any failure."""
++        if command not in ALLOWED_COMMANDS or '\r' in command or '\n' in command:
++            raise EslCommandNotAllowed('command is not allowed')
++        if self._sock is None:
++            raise EslConnectError('not connected')
++        try:
++            self._send('api ' + command, deadline)
++            headers, body = self._read_message(deadline)
++            content_type = headers.get('content-type')
++            if content_type == 'command/reply':
++                if headers.get('reply-text', '').startswith('-ERR permission denied'):
++                    raise EslAuthError('command was refused by the server')
++                raise EslProtocolError('unexpected command reply')
++            if content_type != 'api/response':
++                raise EslProtocolError('unexpected response type')
++            if 'content-length' not in headers:
++                raise EslProtocolError('response has no content length')
++            self._ensure_drained()
++            if body.startswith(b'-ERR'):
++                raise EslProtocolError('server reported a command error')
++            return body
++        except BaseException:
++            self.close()
++            raise
++
++    # -- framing ----------------------------------------------------------------------------------------------
++
++    def _send(self, line: str, deadline: float) -> None:
++        sock = self._sock
++        assert sock is not None
++        timeout = min(self._read_timeout, deadline - time.monotonic())
++        if timeout <= 0:
++            raise EslTimeoutError('deadline exceeded while sending')
++        try:
++            sock.settimeout(timeout)
++            sock.sendall(line.encode('utf-8') + b'\n\n')
++        except TimeoutError:
++            raise EslTimeoutError('timed out sending to FreeSWITCH') from None
++        except OSError:
++            raise EslConnectError('connection to FreeSWITCH was lost') from None
++
++    def _fill(self, message_deadline: float) -> None:
++        sock = self._sock
++        assert sock is not None
++        timeout = message_deadline - time.monotonic()
++        if timeout <= 0:
++            raise EslTimeoutError('timed out waiting for FreeSWITCH')
++        try:
++            sock.settimeout(timeout)
++            chunk = sock.recv(_RECV_SIZE)
++        except TimeoutError:
++            raise EslTimeoutError('timed out waiting for FreeSWITCH') from None
++        except OSError:
++            raise EslConnectError('connection to FreeSWITCH was lost') from None
++        if not chunk:
++            raise EslConnectError('connection closed by FreeSWITCH')
++        self._buf += chunk
++
++    def _read_message(self, run_deadline: float) -> tuple[dict[str, str], bytes]:
++        """Read exactly one ESL message. The whole message must arrive within one read timeout."""
++        message_deadline = min(time.monotonic() + self._read_timeout, run_deadline)
++
++        while True:
++            end = self._buf.find(b'\n\n')
++            if end != -1:
++                break
++            if len(self._buf) > MAX_HEADER_BYTES:
++                raise EslProtocolError('response header is too large')
++            self._fill(message_deadline)
++        if end > MAX_HEADER_BYTES:
++            raise EslProtocolError('response header is too large')
++
++        raw, rest = self._buf[:end], self._buf[end + 2 :]
++        self._buf = rest
++        headers = self._parse_headers(raw)
++
++        if headers.get('content-type') == 'text/disconnect-notice':
++            raise EslConnectError('FreeSWITCH closed the connection')
++
++        length = 0
++        if 'content-length' in headers:
++            value = headers['content-length']
++            if not (value.isascii() and value.isdigit()):
++                raise EslProtocolError('invalid content length')
++            length = int(value)
++            if length > MAX_BODY_BYTES:
++                raise EslProtocolError('response body is too large')
++        while len(self._buf) < length:
++            self._fill(message_deadline)
++        body, self._buf = self._buf[:length], self._buf[length:]
++        return headers, body
++
++    def _ensure_drained(self) -> None:
++        # One request is outstanding at a time, so extra bytes mean the stream is no longer in sync.
++        if self._buf:
++            raise EslProtocolError('unexpected data after response')
++
++    def _parse_headers(self, raw: bytes) -> dict[str, str]:
++        try:
++            text = raw.decode('utf-8')
++        except UnicodeDecodeError:
++            raise EslProtocolError('response header is not valid UTF-8') from None
++        headers: dict[str, str] = {}
++        self._raw_headers = {}
++        self._duplicate_headers = set()
++        for line in text.split('\n'):
++            name, sep, value = line.partition(':')
++            name = name.strip().lower()
++            if not sep or not name:
++                raise EslProtocolError('malformed response header')
++            if name in headers:
++                if name in ('content-type', 'content-length'):
++                    raise EslProtocolError('duplicate response header')
++                self._duplicate_headers.add(name)
++            headers[name] = value.strip()
++            self._raw_headers[name] = value
++        return headers
+diff --git a/freeswitch/hatch.toml b/freeswitch/hatch.toml
+new file mode 100644
+index 0000000..67198ac
+--- /dev/null
++++ b/freeswitch/hatch.toml
+@@ -0,0 +1,10 @@
++[env.collectors.datadog-checks]
++check-types = true
++mypy-deps = [
++  "datadog-checks-base>=37.36.0",
++  "datadog-checks-dev",
++  "pytest",
++]
++
++[[envs.default.matrix]]
++python = ["3.13"]
+diff --git a/freeswitch/images/.gitkeep b/freeswitch/images/.gitkeep
+new file mode 100644
+index 0000000..e69de29
+diff --git a/freeswitch/manifest.json b/freeswitch/manifest.json
+new file mode 100644
+index 0000000..4fd4d85
+--- /dev/null
++++ b/freeswitch/manifest.json
+@@ -0,0 +1,46 @@
++{
++  "manifest_version": "2.0.0",
++  "app_uuid": "dc543065-c1c2-4143-9ffa-5ec9fb6c3c6b",
++  "app_id": "freeswitch",
++  "owner": "integrations-developer-platform",
++  "display_on_public_website": false,
++  "tile": {
++    "overview": "README.md#Overview",
++    "configuration": "README.md#Setup",
++    "support": "README.md#Support",
++    "changelog": "CHANGELOG.md",
++    "description": "Monitor the availability and activity of a FreeSWITCH server.",
++    "title": "FreeSWITCH",
++    "media": [],
++    "classifier_tags": [
++      "Supported OS::Linux",
++      "Category::Network",
++      "Category::Metrics",
++      "Offering::Integration",
++      "Submitted Data Type::Metrics"
++    ]
++  },
++  "assets": {
++    "integration": {
++      "auto_install": true,
++      "source_type_id": 91734645,
++      "source_type_name": "FreeSWITCH",
++      "configuration": {
++        "spec": "assets/configuration/spec.yaml"
++      },
++      "events": {
++        "creates_events": false
++      },
++      "metrics": {
++        "prefix": "freeswitch.",
++        "check": "freeswitch.can_connect",
++        "metadata_path": "metadata.csv"
++      }
++    }
++  },
++  "author": {
++    "support_email": "TODO-maintainer-support-email@example.invalid",
++    "homepage": "https://github.com/DataDog/integrations-extras",
++    "name": "Community"
++  }
++}
+diff --git a/freeswitch/metadata.csv b/freeswitch/metadata.csv
+new file mode 100644
+index 0000000..77a2da2
+--- /dev/null
++++ b/freeswitch/metadata.csv
+@@ -0,0 +1,6 @@
++metric_name,metric_type,interval,unit_name,per_unit_name,description,orientation,integration,short_name,curated_metric,sample_tags
++freeswitch.can_connect,gauge,,,,"1 if the check connected, authenticated and validated the FreeSWITCH responses during this run; 0 otherwise.",1,freeswitch,can connect,,
++freeswitch.uptime,gauge,,second,,The time in seconds that FreeSWITCH has been running.,0,freeswitch,uptime,,
++freeswitch.channels.active,gauge,,,,"The number of channels that currently exist in FreeSWITCH. This is a channel count and not a call count; a bridged call typically has two or more channels.",0,freeswitch,active channels,,
++freeswitch.collection.duration,gauge,,second,,The time in seconds that one run of the check took to collect from FreeSWITCH.,-1,freeswitch,collection duration,,
++freeswitch.collection.errors,count,,error,,The number of failed collection runs. Tagged by error_type: connect or timeout or auth or protocol or parse.,-1,freeswitch,collection errors,,error_type
+diff --git a/freeswitch/pyproject.toml b/freeswitch/pyproject.toml
+new file mode 100644
+index 0000000..f37176b
+--- /dev/null
++++ b/freeswitch/pyproject.toml
+@@ -0,0 +1,58 @@
++[build-system]
++requires = [
++    "hatchling>=0.13.0",
++]
++build-backend = "hatchling.build"
++
++[project]
++name = "datadog-freeswitch"
++description = "The FreeSWITCH check"
++readme = "README.md"
++license = "BSD-3-Clause"
++requires-python = ">=3.13"
++keywords = [
++    "datadog",
++    "datadog agent",
++    "datadog check",
++    "freeswitch",
++]
++authors = []
++classifiers = [
++    "Development Status :: 5 - Production/Stable",
++    "Intended Audience :: Developers",
++    "Intended Audience :: System Administrators",
++    "License :: OSI Approved :: BSD License",
++    "Private :: Do Not Upload",
++    "Programming Language :: Python :: 3.13",
++    "Topic :: System :: Monitoring",
++]
++dependencies = [
++    "datadog-checks-base>=37.36.0",
++]
++dynamic = [
++    "version",
++]
++
++[project.optional-dependencies]
++deps = []
++
++[project.urls]
++Source = "https://github.com/DataDog/integrations-extras"
++
++[tool.hatch.version]
++path = "datadog_checks/freeswitch/__about__.py"
++
++[tool.hatch.build.targets.sdist]
++include = [
++    "/datadog_checks",
++    "/tests",
++    "/manifest.json",
++]
++
++[tool.hatch.build.targets.wheel]
++include = [
++    "/datadog_checks/freeswitch",
++]
++dev-mode-dirs = [
++    ".",
++]
+diff --git a/freeswitch/tests/__init__.py b/freeswitch/tests/__init__.py
+new file mode 100644
+index 0000000..75c6647
+--- /dev/null
++++ b/freeswitch/tests/__init__.py
+@@ -0,0 +1,3 @@
++# (C) Datadog, Inc. 2026-present
++# All rights reserved
++# Licensed under a 3-clause BSD style license (see LICENSE)
+diff --git a/freeswitch/tests/conftest.py b/freeswitch/tests/conftest.py
+new file mode 100644
+index 0000000..cde2733
+--- /dev/null
++++ b/freeswitch/tests/conftest.py
+@@ -0,0 +1,61 @@
++# (C) Datadog, Inc. 2026-present
++# All rights reserved
++# Licensed under a 3-clause BSD style license (see LICENSE)
++from __future__ import annotations
++
++from typing import Any, Callable, Iterator
++
++import pytest
++
++from datadog_checks.base.types import InstanceType
++from datadog_checks.freeswitch import FreeswitchCheck
++
++from .fake_esl import FakeEslServer, Handler
++
++# A distinctive value that must never show up in logs, exceptions, tags or object representations.
++SENTINEL_PASSWORD = 'SENTINEL-pw-7f3a9c1e-do-not-leak'
++
++
++@pytest.fixture
++def instance() -> InstanceType:
++    return {'host': 'localhost', 'password': 'not-a-real-password'}
++
++
++@pytest.fixture
++def make_server() -> Iterator[Callable[..., FakeEslServer]]:
++    servers: list[FakeEslServer] = []
++
++    def factory(handler: Handler | None = None, **kwargs: Any) -> FakeEslServer:
++        kwargs.setdefault('password', SENTINEL_PASSWORD)
++        server = FakeEslServer(handler, **kwargs)
++        servers.append(server)
++        return server
++
++    yield factory
++    for server in servers:
++        server.stop()
++
++
++@pytest.fixture
++def make_check() -> Iterator[Callable[..., FreeswitchCheck]]:
++    checks: list[FreeswitchCheck] = []
++
++    def factory(server: FakeEslServer, **overrides: Any) -> FreeswitchCheck:
++        inst: dict[str, Any] = {
++            'host': '127.0.0.1',
++            'port': server.port,
++            'password': SENTINEL_PASSWORD,
++            'connect_timeout': 0.5,
++            'read_timeout': 0.3,
++            'tags': ['tier:test'],
++        }
++        inst.update(overrides)
++        check = FreeswitchCheck('freeswitch', {}, [inst])
++        checks.append(check)
++        return check
++
++    yield factory
++    for check in checks:
++        client = getattr(check, '_client', None)
++        if client is not None:
++            client.close()
+diff --git a/freeswitch/tests/fake_esl.py b/freeswitch/tests/fake_esl.py
+new file mode 100644
+index 0000000..9b89d50
+--- /dev/null
++++ b/freeswitch/tests/fake_esl.py
+@@ -0,0 +1,237 @@
++# (C) Datadog, Inc. 2026-present
++# All rights reserved
++# Licensed under a 3-clause BSD style license (see LICENSE)
++"""A deterministic, scriptable fake FreeSWITCH Event Socket server for unit tests."""
++
++from __future__ import annotations
++
++import socket
++import threading
++import time
++from typing import Callable
++
++GREETING = b'Content-Type: auth/request\n\n'
++DEFAULT_RESPONSES = {
++    'uptime s': b'3401\n',
++    'show channels count': b'\n4 total.\n',
++}
++
++
++def frame(content_type: str, body: bytes | None = b'', **headers: str) -> bytes:
++    out = 'Content-Type: {}\n'.format(content_type)
++    for name, value in headers.items():
++        out += '{}: {}\n'.format(name.replace('_', '-'), value)
++    if body is not None:
++        out += 'Content-Length: {}\n'.format(len(body))
++    return out.encode() + b'\n' + (body or b'')
++
++
++def command_reply(text: str) -> bytes:
++    return 'Content-Type: command/reply\nReply-Text: {}\n\n'.format(text).encode()
++
++
++def api_response(body: bytes) -> bytes:
++    return frame('api/response', body)
++
++
++DISCONNECT = frame('text/disconnect-notice', b'Disconnected, goodbye.\n', Content_Disposition='disconnect')
++
++
++class Conn:
++    """Server side of one accepted connection."""
++
++    def __init__(self, sock: socket.socket) -> None:
++        self.sock = sock
++        self.sock.settimeout(5)
++        self._buf = b''
++
++    def read_line(self) -> str | None:
++        """Read one ``\\n\\n``-terminated client line, or None on EOF/timeout."""
++        while b'\n\n' not in self._buf:
++            try:
++                chunk = self.sock.recv(4096)
++            except OSError:
++                return None
++            if not chunk:
++                return None
++            self._buf += chunk
++        line, self._buf = self._buf.split(b'\n\n', 1)
++        return line.decode('utf-8', 'replace')
++
++    def send(self, data: bytes) -> None:
++        try:
++            self.sock.sendall(data)
++        except OSError:
++            pass
++
++    def drip(self, data: bytes, delay: float) -> None:
++        for i in range(len(data)):
++            self.send(data[i : i + 1])
++            time.sleep(delay)
++
++    def wait_closed(self, timeout: float = 3.0) -> None:
++        """Stall (send nothing) until the client goes away or the timeout passes."""
++        end = time.monotonic() + timeout
++        self.sock.settimeout(0.1)
++        while time.monotonic() < end:
++            try:
++                if not self.sock.recv(4096):
++                    return
++            except TimeoutError:
++                continue
++            except OSError:
++                return
++
++    def close(self) -> None:
++        try:
++            self.sock.close()
++        except OSError:
++            pass
++
++
++Handler = Callable[[Conn, 'FakeEslServer', int], None]
++
++
++class FakeEslServer:
++    def __init__(self, handler: Handler | None = None, password: str = 'secret', users: dict | None = None) -> None:
++        self.handler = handler or make_handler()
++        self.password = password
++        self.users = users or {}
++        self.lines: list[str] = []
++        self.connections = 0
++        self.mode = 'good'
++        # What a userauth success advertises. None omits the header; USERAUTH_REPLY overrides the whole reply.
++        self.allowed_api: str | None = 'uptime,show'
++        self.userauth_reply: bytes | None = None
++        self.responses = dict(DEFAULT_RESPONSES)
++        self._lock = threading.Lock()
++        self._socks: list[socket.socket] = []
++        self._listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
++        self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
++        self._listener.bind(('127.0.0.1', 0))
++        self._listener.listen(16)
++        self.port = self._listener.getsockname()[1]
++        self._stop = threading.Event()
++        self._thread = threading.Thread(target=self._serve, daemon=True)
++        self._thread.start()
++
++    def _serve(self) -> None:
++        while not self._stop.is_set():
++            try:
++                sock, _ = self._listener.accept()
++            except OSError:
++                return
++            with self._lock:
++                self.connections += 1
++                index = self.connections
++                self._socks.append(sock)
++            threading.Thread(target=self._run, args=(sock, index), daemon=True).start()
++
++    def _run(self, sock: socket.socket, index: int) -> None:
++        conn = Conn(sock)
++        try:
++            self.handler(conn, self, index)
++        finally:
++            conn.close()
++
++    def record(self, line: str) -> None:
++        with self._lock:
++            self.lines.append(line)
++
++    def kill_connections(self) -> None:
++        with self._lock:
++            socks, self._socks = self._socks, []
++        for sock in socks:
++            try:
++                sock.shutdown(socket.SHUT_RDWR)
++            except OSError:
++                pass
++            try:
++                sock.close()
++            except OSError:
++                pass
++
++    def stop(self) -> None:
++        self._stop.set()
++        try:
++            self._listener.close()
++        except OSError:
++            pass
++        self.kill_connections()
++
++    @property
++    def api_lines(self) -> list[str]:
++        return [line for line in self.lines if line.startswith('api ')]
++
++
++def make_handler(
++    greeting: bytes | None = GREETING,
++    on_auth: Callable[[Conn, FakeEslServer, str], bool] | None = None,
++    on_api: Callable[[Conn, FakeEslServer, str], bool] | None = None,
++) -> Handler:
++    """Build a connection handler.
++
++    ``on_auth`` / ``on_api`` return True to continue the session and False to end it, and are responsible for
++    sending whatever they want to send. With ``greeting=None`` nothing is sent and the server just waits.
++    """
++
++    def handler(conn: Conn, server: FakeEslServer, index: int) -> None:
++        if greeting is None:
++            conn.wait_closed()
++            return
++        conn.send(greeting)
++        authed = False
++        while True:
++            line = conn.read_line()
++            if line is None:
++                return
++            server.record(line)
++            if line == 'exit':
++                conn.send(command_reply('+OK bye'))
++                return
++            if not authed:
++                if on_auth is not None:
++                    if not on_auth(conn, server, line):
++                        return
++                    authed = True
++                    continue
++                if line == 'auth ' + server.password:
++                    authed = True
++                    conn.send(command_reply('+OK accepted'))
++                elif line.startswith('userauth '):
++                    user, _, password = line[len('userauth ') :].partition(':')
++                    if user in server.users and server.users[user] == password:
++                        authed = True
++                        if server.userauth_reply is not None:
++                            conn.send(server.userauth_reply)
++                        else:
++                            api = (
++                                b''
++                                if server.allowed_api is None
++                                else b'Allowed-API: ' + server.allowed_api.encode() + b'\n'
++                            )
++                            conn.send(
++                                b'Content-Type: command/reply\nReply-Text: +OK accepted\n'
++                                b'Allowed-Events: all\n' + api + b'\n'
++                            )
++                    else:
++                        conn.send(command_reply('-ERR invalid') + DISCONNECT)
++                        return
++                else:
++                    conn.send(command_reply('-ERR invalid') + DISCONNECT)
++                    return
++                continue
++            if line.startswith('api '):
++                cmd = line[4:]
++                if on_api is not None:
++                    if not on_api(conn, server, cmd):
++                        return
++                    continue
++                if cmd in server.responses:
++                    conn.send(api_response(server.responses[cmd]))
++                else:
++                    conn.send(api_response('-ERR {} Command not found!\n'.format(cmd).encode()))
++            else:
++                conn.send(command_reply('-ERR command not found'))
++
++    return handler
+diff --git a/freeswitch/tests/test_unit.py b/freeswitch/tests/test_unit.py
+new file mode 100644
+index 0000000..030b56a
+--- /dev/null
++++ b/freeswitch/tests/test_unit.py
+@@ -0,0 +1,1075 @@
++# (C) Datadog, Inc. 2026-present
++# All rights reserved
++# Licensed under a 3-clause BSD style license (see LICENSE)
++from __future__ import annotations
++
++import logging
++import pathlib
++import socket
++import threading
++import time
++from typing import Any, Callable
++
++import pytest
++
++from datadog_checks.base.stubs.aggregator import AggregatorStub
++from datadog_checks.dev.utils import get_metadata_metrics
++from datadog_checks.freeswitch import FreeswitchCheck, __version__, esl
++from datadog_checks.freeswitch.esl import EslClient
++
++from .conftest import SENTINEL_PASSWORD
++from .fake_esl import (
++    DISCONNECT,
++    FakeEslServer,
++    api_response,
++    command_reply,
++    frame,
++    make_handler,
++)
++
++BASE_TAGS = ['freeswitch_host:127.0.0.1', 'tier:test']
++ALL_METRICS = [
++    'freeswitch.can_connect',
++    'freeswitch.uptime',
++    'freeswitch.channels.active',
++    'freeswitch.collection.duration',
++    'freeswitch.collection.errors',
++]
++
++MakeServer = Callable[..., FakeEslServer]
++MakeCheck = Callable[..., FreeswitchCheck]
++
++
++def tags_for(server: FakeEslServer, *extra: str) -> list[str]:
++    return ['freeswitch_host:127.0.0.1', 'freeswitch_port:{}'.format(server.port), 'tier:test', *extra]
++
++
++def run(dd_run_check: Callable[..., None], check: FreeswitchCheck) -> None:
++    dd_run_check(check)
++
++
++def assert_failed(aggregator: AggregatorStub, server: FakeEslServer, error_type: str, runs: int = 1) -> None:
++    aggregator.assert_metric('freeswitch.can_connect', 0, count=runs, tags=tags_for(server))
++    aggregator.assert_metric(
++        'freeswitch.collection.errors',
++        1,
++        count=runs,
++        tags=tags_for(server, 'error_type:' + error_type),
++        metric_type=aggregator.COUNT,
++    )
++    aggregator.assert_metric('freeswitch.collection.duration', count=runs)
++    aggregator.assert_metric('freeswitch.uptime', count=0)
++    aggregator.assert_metric('freeswitch.channels.active', count=0)
++    aggregator.assert_all_metrics_covered()
++
++
++def one_failure(
++    server: FakeEslServer,
++    make_check: MakeCheck,
++    dd_run_check: Callable[..., None],
++    aggregator: AggregatorStub,
++    error_type: str,
++    **overrides: Any,
++) -> FreeswitchCheck:
++    check = make_check(server, **overrides)
++    dd_run_check(check)
++    assert_failed(aggregator, server, error_type)
++    return check
++
++
++# ---------------------------------------------------------------------------------------------------------
++# Success path
++# ---------------------------------------------------------------------------------------------------------
++
++
++def test_version() -> None:
++    assert __version__
++
++
++def test_success_metrics_and_wire(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    server = make_server()
++    check = make_check(server)
++    dd_run_check(check)
++
++    tags = tags_for(server)
++    aggregator.assert_metric('freeswitch.can_connect', 1, tags=tags, count=1, metric_type=aggregator.GAUGE)
++    aggregator.assert_metric('freeswitch.uptime', 3401, tags=tags, count=1, metric_type=aggregator.GAUGE)
++    aggregator.assert_metric('freeswitch.channels.active', 4, tags=tags, count=1, metric_type=aggregator.GAUGE)
++    aggregator.assert_metric('freeswitch.collection.errors', 0, tags=tags, count=1, metric_type=aggregator.COUNT)
++    aggregator.assert_metric('freeswitch.collection.duration', tags=tags, count=1, metric_type=aggregator.GAUGE)
++    aggregator.assert_all_metrics_covered()
++    aggregator.assert_metrics_using_metadata(get_metadata_metrics())
++
++    duration = aggregator.metrics('freeswitch.collection.duration')[0].value
++    assert 0 <= duration < 5
++    assert server.lines == ['auth ' + SENTINEL_PASSWORD, 'api uptime s', 'api show channels count']
++
++
++def test_connection_reuse_across_runs(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    server = make_server()
++    check = make_check(server)
++    for _ in range(5):
++        dd_run_check(check)
++
++    assert server.connections == 1
++    assert server.api_lines == ['api uptime s', 'api show channels count'] * 5
++    aggregator.assert_metric('freeswitch.can_connect', 1, count=5)
++    aggregator.assert_metric('freeswitch.collection.errors', 0, count=5)
++
++
++@pytest.mark.parametrize(
++    'body, expected',
++    [
++        (b'\n0 total.\n', 0),
++        (b'\n4 total.\n', 4),
++        (b'40 total.\n', 40),
++        (b'  \n\n  12 total.  \n\n', 12),
++        (b'\r\n7 total.\r\n', 7),
++    ],
++)
++def test_channel_count_parsing(
++    body: bytes,
++    expected: int,
++    make_server: MakeServer,
++    make_check: MakeCheck,
++    dd_run_check: Callable[..., None],
++    aggregator: AggregatorStub,
++) -> None:
++    server = make_server()
++    server.responses['show channels count'] = body
++    dd_run_check(make_check(server))
++    aggregator.assert_metric('freeswitch.channels.active', expected, count=1)
++    aggregator.assert_metric('freeswitch.can_connect', 1, count=1)
++
++
++@pytest.mark.parametrize('body, expected', [(b'0\n', 0), (b'3401', 3401), (b' 86400 \n', 86400)])
++def test_uptime_parsing(
++    body: bytes,
++    expected: int,
++    make_server: MakeServer,
++    make_check: MakeCheck,
++    dd_run_check: Callable[..., None],
++    aggregator: AggregatorStub,
++) -> None:
++    server = make_server()
++    server.responses['uptime s'] = body
++    dd_run_check(make_check(server))
++    aggregator.assert_metric('freeswitch.uptime', expected, count=1)
++
++
++@pytest.mark.parametrize(
++    'command, body',
++    [
++        ('uptime s', b'up 1 hour\n'),
++        ('uptime s', b'-5\n'),
++        ('uptime s', b'12.5\n'),
++        ('uptime s', b'\xff\xfe\n'),
++        ('uptime s', b'\n'),
++        ('show channels count', b'4\n'),
++        ('show channels count', b'many total.\n'),
++        ('show channels count', b'4 total.\n5 total.\n'),
++        ('show channels count', b'-1 total.\n'),
++        ('show channels count', b'\xff total.\n'),
++        ('show channels count', b'{"row_count":0}'),
++    ],
++)
++def test_unparseable_responses(
++    command: str,
++    body: bytes,
++    make_server: MakeServer,
++    make_check: MakeCheck,
++    dd_run_check: Callable[..., None],
++    aggregator: AggregatorStub,
++) -> None:
++    server = make_server()
++    server.responses[command] = body
++    one_failure(server, make_check, dd_run_check, aggregator, 'parse')
++
++
++# ---------------------------------------------------------------------------------------------------------
++# Authentication
++# ---------------------------------------------------------------------------------------------------------
++
++
++def test_invalid_password_is_not_retried(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    server = make_server(password='some-other-password')
++    one_failure(server, make_check, dd_run_check, aggregator, 'auth')
++    assert server.connections == 1
++    assert server.api_lines == []
++
++
++def test_userauth_success_uses_userauth_line(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    server = make_server(users={'monitor@example.org': SENTINEL_PASSWORD})
++    dd_run_check(make_check(server, username='monitor@example.org'))
++    aggregator.assert_metric('freeswitch.can_connect', 1, count=1)
++    assert server.lines[0] == 'userauth monitor@example.org:' + SENTINEL_PASSWORD
++
++
++def test_userauth_rejected_does_not_fall_back_to_shared_password(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    # The shared password is valid on this server; the directory user is not.
++    server = make_server(users={})
++    one_failure(server, make_check, dd_run_check, aggregator, 'auth', username='monitor@example.org')
++    assert server.connections == 1
++    assert [line.split(' ')[0] for line in server.lines] == ['userauth']
++
++
++def test_permission_denied_is_auth_error(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    def on_api(conn: Any, server: FakeEslServer, cmd: str) -> bool:
++        conn.send(command_reply('-ERR permission denied'))
++        return True
++
++    server = make_server(make_handler(on_api=on_api))
++    one_failure(server, make_check, dd_run_check, aggregator, 'auth')
++    assert server.connections == 1
++
++
++@pytest.mark.parametrize('username', ['monitor', '@example.org', 'monitor@', 'a:b@example.org', 'a b@example.org'])
++def test_invalid_username_is_a_configuration_error(
++    username: str, make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None]
++) -> None:
++    server = make_server()
++    check = make_check(server, username=username)
++    with pytest.raises(Exception) as exc:
++        dd_run_check(check)
++    assert SENTINEL_PASSWORD not in str(exc.value)
++    assert server.connections == 0
++
++
++@pytest.mark.parametrize('password', ['line1\nline2', 'with\rcr', 'tab\tchar'])
++def test_password_with_control_characters_is_rejected(
++    password: str, make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None]
++) -> None:
++    server = make_server()
++    check = make_check(server, password=password)
++    with pytest.raises(Exception) as exc:
++        dd_run_check(check)
++    assert 'line1' not in str(exc.value)
++    assert server.connections == 0
++
++
++# ---------------------------------------------------------------------------------------------------------
++# Restricted-account policy (fail closed)
++# ---------------------------------------------------------------------------------------------------------
++
++
++def _userauth_server(make_server: MakeServer, **attrs: Any) -> FakeEslServer:
++    server = make_server(users={'monitor@example.org': SENTINEL_PASSWORD})
++    for name, value in attrs.items():
++        setattr(server, name, value)
++    return server
++
++
++@pytest.mark.parametrize(
++    'advertised', ['uptime,show', 'show,uptime', 'uptime show', 'show uptime', 'uptime,uptime,show']
++)
++def test_userauth_accepts_exactly_the_required_permissions(
++    advertised: str,
++    make_server: MakeServer,
++    make_check: MakeCheck,
++    dd_run_check: Callable[..., None],
++    aggregator: AggregatorStub,
++) -> None:
++    server = _userauth_server(make_server, allowed_api=advertised)
++    dd_run_check(make_check(server, username='monitor@example.org'))
++    aggregator.assert_metric('freeswitch.can_connect', 1, count=1)
++
++
++@pytest.mark.parametrize(
++    'advertised',
++    [
++        'all',
++        'ALL',
++        None,  # header absent: the server did not say what the account may do
++        '',
++        'uptime',  # cannot do the channel query; refuse early
++        'show',
++        'uptime,show,status',
++        'uptime,show,system',
++        'uptime, show',  # server would split on the space and see "uptime,"
++        'uptime,,show',
++        'uptime,show,',
++        ',uptime,show',
++        'Uptime,show',
++    ],
++)
++def test_userauth_account_with_other_permissions_is_refused_before_any_command(
++    advertised: str | None,
++    make_server: MakeServer,
++    make_check: MakeCheck,
++    dd_run_check: Callable[..., None],
++    aggregator: AggregatorStub,
++) -> None:
++    server = _userauth_server(make_server, allowed_api=advertised)
++    one_failure(server, make_check, dd_run_check, aggregator, 'auth', username='monitor@example.org')
++    assert server.api_lines == []
++    assert [line.split(' ')[0] for line in server.lines] == ['userauth']  # and no fallback to `auth`
++    assert server.connections == 1
++
++
++@pytest.mark.parametrize(
++    'reply',
++    [
++        # trailing padding could hide entries the server truncated from the advertised line
++        b'Content-Type: command/reply\nReply-Text: +OK accepted\nAllowed-API: uptime,show   \n\n',
++        b'Content-Type: command/reply\nReply-Text: +OK accepted\nAllowed-API:  uptime,show\n\n',
++        b'Content-Type: command/reply\nReply-Text: +OK accepted\nAllowed-API:uptime,show\n\n',
++        # a duplicated header is ambiguous
++        b'Content-Type: command/reply\nReply-Text: +OK accepted\nAllowed-API: uptime,show\nAllowed-API: all\n\n',
++        b'Content-Type: command/reply\nReply-Text: +OK accepted\nAllowed-API: all\nAllowed-API: uptime,show\n\n',
++    ],
++)
++def test_userauth_ambiguous_advertisement_is_refused(
++    reply: bytes,
++    make_server: MakeServer,
++    make_check: MakeCheck,
++    dd_run_check: Callable[..., None],
++    aggregator: AggregatorStub,
++) -> None:
++    server = _userauth_server(make_server, userauth_reply=reply)
++    one_failure(server, make_check, dd_run_check, aggregator, 'auth', username='monitor@example.org')
++    assert server.api_lines == []
++
++
++def test_policy_does_not_apply_to_shared_password_mode(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    # The shared password cannot be restricted and the server advertises nothing; the README documents the risk.
++    server = make_server()
++    dd_run_check(make_check(server))
++    aggregator.assert_metric('freeswitch.can_connect', 1, count=1)
++    assert server.lines[0].startswith('auth ')
++
++
++def test_refusal_reason_is_logged_once_without_secrets(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], caplog: pytest.LogCaptureFixture
++) -> None:
++    caplog.set_level(logging.DEBUG)
++    server = _userauth_server(make_server, allowed_api='all')
++    check = make_check(server, username='monitor@example.org')
++    for _ in range(3):
++        dd_run_check(check)
++    warnings = _warnings(caplog)
++    assert len(warnings) == 1
++    assert 'error_type=auth' in warnings[0] and 'not restricted' in warnings[0]
++    assert SENTINEL_PASSWORD not in caplog.text
++    assert 'monitor@example.org' not in caplog.text
++
++
++def test_policy_still_leaves_the_client_allowlist_in_force(make_server: MakeServer) -> None:
++    server = _userauth_server(make_server)
++    client = EslClient('127.0.0.1', server.port, SENTINEL_PASSWORD, 'monitor@example.org', 0.5, 0.3)
++    client.connect(time.monotonic() + 2)
++    with pytest.raises(esl.EslCommandNotAllowed):
++        client.api('version', time.monotonic() + 2)
++    client.close()
++    assert esl.REQUIRED_API_PERMISSIONS == {'uptime', 'show'}
++
++
++# ---------------------------------------------------------------------------------------------------------
++# Connection failures and recovery
++# ---------------------------------------------------------------------------------------------------------
++
++
++def _closed_port() -> int:
++    s = socket.socket()
++    s.bind(('127.0.0.1', 0))
++    port = s.getsockname()[1]
++    s.close()
++    return port
++
++
++def test_connection_refused(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    server = make_server()
++    check = make_check(server, port=_closed_port())
++    dd_run_check(check)
++    aggregator.assert_metric('freeswitch.can_connect', 0, count=1)
++    aggregator.assert_metric_has_tag('freeswitch.collection.errors', 'error_type:connect')
++    assert server.connections == 0
++
++
++def test_unresolvable_host_is_a_connect_error(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    check = make_check(make_server(), host='no-such-host.invalid')
++    dd_run_check(check)
++    aggregator.assert_metric('freeswitch.can_connect', 0, count=1)
++    aggregator.assert_metric_has_tag('freeswitch.collection.errors', 'error_type:connect')
++
++
++def test_disconnect_during_authentication(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    server = make_server(make_handler(on_auth=lambda conn, srv, line: False))
++    one_failure(server, make_check, dd_run_check, aggregator, 'connect')
++    assert server.connections == 1
++
++
++def test_disconnect_during_command(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    server = make_server(make_handler(on_api=lambda conn, srv, cmd: False))
++    one_failure(server, make_check, dd_run_check, aggregator, 'connect')
++    assert server.connections == 1  # a fresh connection that fails is not retried
++
++
++def test_disconnect_notice_instead_of_greeting(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    server = make_server(make_handler(greeting=DISCONNECT))
++    one_failure(server, make_check, dd_run_check, aggregator, 'connect')
++
++
++def test_disconnect_notice_during_command(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    def on_api(conn: Any, srv: FakeEslServer, cmd: str) -> bool:
++        conn.send(DISCONNECT)
++        return False
++
++    server = make_server(make_handler(on_api=on_api))
++    one_failure(server, make_check, dd_run_check, aggregator, 'connect')
++
++
++def test_restart_between_runs_reconnects_once_and_succeeds(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    server = make_server()
++    check = make_check(server)
++    dd_run_check(check)
++    server.kill_connections()  # simulates FreeSWITCH restarting
++    time.sleep(0.1)
++    dd_run_check(check)
++
++    assert server.connections == 2
++    aggregator.assert_metric('freeswitch.can_connect', 1, count=2)
++    aggregator.assert_metric('freeswitch.collection.errors', 0, count=2)
++    aggregator.assert_metric('freeswitch.can_connect', 0, count=0)
++
++
++def test_connection_that_dies_mid_exchange_is_replaced_in_the_same_run(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    state = {'calls': 0}
++
++    def on_api(conn: Any, srv: FakeEslServer, cmd: str) -> bool:
++        state['calls'] += 1
++        # First connection: answer the first run, then drop on the next command without a prior FIN.
++        if state['calls'] == 3 and srv.connections == 1:
++            return False
++        conn.send(api_response(srv.responses[cmd]))
++        return True
++
++    server = make_server(make_handler(on_api=on_api))
++    check = make_check(server)
++    dd_run_check(check)
++    dd_run_check(check)
++
++    assert server.connections == 2
++    aggregator.assert_metric('freeswitch.can_connect', 1, count=2)
++    aggregator.assert_metric('freeswitch.collection.errors', 0, count=2)
++
++
++def test_recovery_after_failure(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    def on_auth(conn: Any, srv: FakeEslServer, line: str) -> bool:
++        if srv.mode == 'reject':
++            conn.send(command_reply('-ERR invalid') + DISCONNECT)
++            return False
++        conn.send(command_reply('+OK accepted'))
++        return True
++
++    server = make_server(make_handler(on_auth=on_auth))
++    server.mode = 'reject'
++    check = make_check(server)
++    dd_run_check(check)
++    aggregator.assert_metric('freeswitch.can_connect', 0, count=1)
++    server.mode = 'good'
++    dd_run_check(check)
++    dd_run_check(check)
++    aggregator.assert_metric('freeswitch.can_connect', 1, count=2)
++    assert server.connections == 2
++
++
++def test_failures_never_cause_a_retry_loop(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    def on_api(conn: Any, srv: FakeEslServer, cmd: str) -> bool:
++        if srv.mode == 'drop':
++            return False
++        conn.send(api_response(srv.responses[cmd]))
++        return True
++
++    def handler(conn: Any, srv: FakeEslServer, index: int) -> None:
++        if srv.mode == 'drop' and index > 1:
++            return  # new connections are closed immediately
++        make_handler(on_api=on_api)(conn, srv, index)
++
++    server = make_server(handler)
++    check = make_check(server)
++    dd_run_check(check)
++    assert server.connections == 1
++    server.mode = 'drop'
++    dd_run_check(check)  # reused connection fails, one reconnect also fails
++    assert server.connections == 2
++    dd_run_check(check)  # nothing is connected: exactly one new attempt
++    assert server.connections == 3
++    aggregator.assert_metric('freeswitch.can_connect', 0, count=2)
++
++
++# ---------------------------------------------------------------------------------------------------------
++# Timeouts
++# ---------------------------------------------------------------------------------------------------------
++
++
++def test_no_greeting_times_out(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    server = make_server(make_handler(greeting=None))
++    start = time.monotonic()
++    one_failure(server, make_check, dd_run_check, aggregator, 'timeout')
++    assert time.monotonic() - start < 2
++
++
++def test_stall_during_authentication_times_out(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    def on_auth(conn: Any, srv: FakeEslServer, line: str) -> bool:
++        conn.wait_closed()
++        return False
++
++    server = make_server(make_handler(on_auth=on_auth))
++    one_failure(server, make_check, dd_run_check, aggregator, 'timeout')
++
++
++def test_stall_during_command_times_out(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    def on_api(conn: Any, srv: FakeEslServer, cmd: str) -> bool:
++        conn.wait_closed()
++        return False
++
++    server = make_server(make_handler(on_api=on_api))
++    one_failure(server, make_check, dd_run_check, aggregator, 'timeout')
++    assert server.connections == 1
++
++
++def test_slow_drip_response_is_bounded_by_one_read_timeout(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    def on_api(conn: Any, srv: FakeEslServer, cmd: str) -> bool:
++        conn.drip(api_response(b'3401\n'), 0.05)  # arrives, but far too slowly
++        return False
++
++    server = make_server(make_handler(on_api=on_api))
++    start = time.monotonic()
++    one_failure(server, make_check, dd_run_check, aggregator, 'timeout', read_timeout=0.3)
++    assert time.monotonic() - start < 1.5
++
++
++def test_run_deadline_is_below_the_collection_interval(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    server = make_server(make_handler(greeting=None))
++    check = make_check(server, connect_timeout=5, read_timeout=5, min_collection_interval=1)
++    start = time.monotonic()
++    dd_run_check(check)
++    assert time.monotonic() - start < 1.5
++    aggregator.assert_metric_has_tag('freeswitch.collection.errors', 'error_type:timeout')
++
++
++# ---------------------------------------------------------------------------------------------------------
++# Name resolution, deadlines and logging
++# ---------------------------------------------------------------------------------------------------------
++
++
++def test_ip_literal_is_connected_without_name_resolution(
++    monkeypatch: pytest.MonkeyPatch,
++    make_server: MakeServer,
++    make_check: MakeCheck,
++    dd_run_check: Callable[..., None],
++    aggregator: AggregatorStub,
++) -> None:
++    def no_dns(*args: Any, **kwargs: Any) -> None:
++        raise AssertionError('name resolution attempted for an IP literal')
++
++    monkeypatch.setattr(socket, 'getaddrinfo', no_dns)
++    server = make_server()
++    dd_run_check(make_check(server, host='127.0.0.1'))
++    aggregator.assert_metric('freeswitch.can_connect', 1, count=1)
++
++
++def test_ipv6_literal_failure_is_a_connect_error_without_resolution(
++    monkeypatch: pytest.MonkeyPatch,
++    make_server: MakeServer,
++    make_check: MakeCheck,
++    dd_run_check: Callable[..., None],
++    aggregator: AggregatorStub,
++) -> None:
++    def no_dns(*args: Any, **kwargs: Any) -> None:
++        raise AssertionError('name resolution attempted for an IP literal')
++
++    monkeypatch.setattr(socket, 'getaddrinfo', no_dns)
++    dd_run_check(make_check(make_server(), host='::1', port=_closed_port()))
++    aggregator.assert_metric('freeswitch.can_connect', 0, count=1)
++    aggregator.assert_metric_has_tag('freeswitch.collection.errors', 'error_type:connect')
++
++
++def test_slow_name_resolution_is_not_followed_by_a_late_connection(
++    monkeypatch: pytest.MonkeyPatch,
++    make_server: MakeServer,
++    make_check: MakeCheck,
++    dd_run_check: Callable[..., None],
++    aggregator: AggregatorStub,
++) -> None:
++    real = socket.getaddrinfo
++
++    def slow(*args: Any, **kwargs: Any) -> Any:
++        time.sleep(0.6)
++        return real(*args, **kwargs)
++
++    monkeypatch.setattr(socket, 'getaddrinfo', slow)
++    server = make_server()
++    check = make_check(server, host='localhost', min_collection_interval=0.5)
++    dd_run_check(check)
++
++    aggregator.assert_metric('freeswitch.can_connect', 0, count=1)
++    aggregator.assert_metric_has_tag('freeswitch.collection.errors', 'error_type:timeout')
++    assert server.connections == 0
++    # No lingering thread or retry: the next run resolves again exactly once.
++    dd_run_check(check)
++    assert server.connections == 0
++
++
++def test_hostname_resolution_failure_is_a_connect_error(
++    monkeypatch: pytest.MonkeyPatch,
++    make_server: MakeServer,
++    make_check: MakeCheck,
++    dd_run_check: Callable[..., None],
++    aggregator: AggregatorStub,
++) -> None:
++    def failing(*args: Any, **kwargs: Any) -> None:
++        raise socket.gaierror('temporary failure in name resolution of secret-host-detail')
++
++    monkeypatch.setattr(socket, 'getaddrinfo', failing)
++    dd_run_check(make_check(make_server(), host='fs.example.org'))
++    aggregator.assert_metric('freeswitch.can_connect', 0, count=1)
++    aggregator.assert_metric_has_tag('freeswitch.collection.errors', 'error_type:connect')
++
++
++def _warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
++    return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING and r.name.endswith('freeswitch')]
++
++
++def test_persistent_failure_warns_once_not_every_run(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], caplog: pytest.LogCaptureFixture
++) -> None:
++    caplog.set_level(logging.DEBUG)
++    server = make_server(password='some-other-password')
++    check = make_check(server)
++    for _ in range(6):
++        dd_run_check(check)
++
++    warnings = _warnings(caplog)
++    assert len(warnings) == 1
++    assert 'error_type=auth' in warnings[0]
++    assert '127.0.0.1:{}'.format(server.port) in warnings[0]
++    assert SENTINEL_PASSWORD not in caplog.text
++    assert sum('still failing' in r.getMessage() for r in caplog.records) == 5
++
++
++def test_error_type_change_and_recovery_are_logged(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], caplog: pytest.LogCaptureFixture
++) -> None:
++    caplog.set_level(logging.DEBUG)
++
++    def on_auth(conn: Any, srv: FakeEslServer, line: str) -> bool:
++        if srv.mode == 'reject':
++            conn.send(command_reply('-ERR invalid') + DISCONNECT)
++            return False
++        if srv.mode == 'drop':
++            return False
++        conn.send(command_reply('+OK accepted'))
++        return True
++
++    server = make_server(make_handler(on_auth=on_auth))
++    check = make_check(server)
++    server.mode = 'reject'
++    dd_run_check(check)
++    dd_run_check(check)
++    server.mode = 'drop'
++    dd_run_check(check)
++    server.mode = 'good'
++    dd_run_check(check)
++    dd_run_check(check)
++
++    warnings = _warnings(caplog)
++    assert len(warnings) == 2
++    assert 'error_type=auth' in warnings[0] and 'error_type=connect' in warnings[1]
++    recovered = [r.getMessage() for r in caplog.records if 'recovered' in r.getMessage()]
++    assert len(recovered) == 1 and 'after 3 failed' in recovered[0]
++    assert SENTINEL_PASSWORD not in caplog.text
++
++
++def test_reminder_warning_is_rate_limited(
++    monkeypatch: pytest.MonkeyPatch,
++    make_server: MakeServer,
++    make_check: MakeCheck,
++    dd_run_check: Callable[..., None],
++    caplog: pytest.LogCaptureFixture,
++) -> None:
++    from datadog_checks.freeswitch import check as check_module
++
++    monkeypatch.setattr(check_module, 'LOG_REMINDER_SECONDS', 0.3)
++    caplog.set_level(logging.DEBUG)
++    check = make_check(make_server(password='some-other-password'))
++    dd_run_check(check)
++    dd_run_check(check)
++    assert len(_warnings(caplog)) == 1
++    time.sleep(0.35)
++    dd_run_check(check)
++    assert len(_warnings(caplog)) == 2
++
++
++# ---------------------------------------------------------------------------------------------------------
++# Protocol failures
++# ---------------------------------------------------------------------------------------------------------
++
++
++def _api_reply_handler(payload: bytes, then_close: bool = False) -> Any:
++    def on_api(conn: Any, srv: FakeEslServer, cmd: str) -> bool:
++        conn.send(payload)
++        return not then_close
++
++    return make_handler(on_api=on_api)
++
++
++@pytest.mark.parametrize(
++    'name, payload, then_close, error_type',
++    [
++        ('missing_length', b'Content-Type: api/response\n\n3401\n', False, 'protocol'),
++        ('negative_length', b'Content-Type: api/response\nContent-Length: -5\n\n3401\n', False, 'protocol'),
++        ('non_numeric_length', b'Content-Type: api/response\nContent-Length: abc\n\n3401\n', False, 'protocol'),
++        ('signed_length', b'Content-Type: api/response\nContent-Length: +5\n\n3401\n', False, 'protocol'),
++        ('huge_length', b'Content-Type: api/response\nContent-Length: 99999999999\n\n', False, 'protocol'),
++        ('oversized_length', b'Content-Type: api/response\nContent-Length: 65537\n\n', False, 'protocol'),
++        (
++            'duplicate_length',
++            b'Content-Type: api/response\nContent-Length: 5\nContent-Length: 5\n\n3401\n',
++            False,
++            'protocol',
++        ),
++        ('truncated_body', b'Content-Type: api/response\nContent-Length: 10\n\n340', True, 'connect'),
++        ('truncated_then_stall', b'Content-Type: api/response\nContent-Length: 10\n\n340', False, 'timeout'),
++        ('wrong_content_type', frame('text/event-plain', b'3401\n'), False, 'protocol'),
++        ('missing_content_type', b'Content-Length: 5\n\n3401\n', False, 'protocol'),
++        ('malformed_header', b'this is not a header\n\n', False, 'protocol'),
++        ('invalid_utf8_header', b'Content-Type: api/response\nX: \xff\xfe\nContent-Length: 0\n\n', False, 'protocol'),
++        ('unknown_command', api_response(b'-ERR uptime Command not found!\n'), False, 'protocol'),
++        ('unexpected_reply', command_reply('+OK something'), False, 'protocol'),
++        ('extra_frame', api_response(b'3401\n') + api_response(b'3401\n'), False, 'protocol'),
++        ('oversized_header_no_terminator', b'X-Pad: ' + b'a' * 9000, False, 'protocol'),
++        ('oversized_header_terminated', b'X-Pad: ' + b'a' * 9000 + b'\n\n', False, 'protocol'),
++        ('oversized_body', frame('api/response', b'0' * 70000), False, 'protocol'),
++    ],
++    ids=lambda v: v if isinstance(v, str) else ('' if isinstance(v, bytes) else None),
++)
++def test_protocol_failures(
++    name: str,
++    payload: bytes,
++    then_close: bool,
++    error_type: str,
++    make_server: MakeServer,
++    make_check: MakeCheck,
++    dd_run_check: Callable[..., None],
++    aggregator: AggregatorStub,
++) -> None:
++    server = make_server(_api_reply_handler(payload, then_close))
++    one_failure(server, make_check, dd_run_check, aggregator, error_type)
++    assert server.connections == 1
++
++
++def test_unexpected_greeting(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    server = make_server(make_handler(greeting=frame('command/reply', b'hello')))
++    one_failure(server, make_check, dd_run_check, aggregator, 'protocol')
++    assert server.lines == []  # no credentials are sent to something that did not ask for them
++
++
++def test_unexpected_authentication_reply(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    def on_auth(conn: Any, srv: FakeEslServer, line: str) -> bool:
++        conn.send(frame('api/response', b'+OK'))
++        return False
++
++    server = make_server(make_handler(on_auth=on_auth))
++    one_failure(server, make_check, dd_run_check, aggregator, 'protocol')
++
++
++def test_failure_closes_the_connection_so_a_late_reply_cannot_desynchronize(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    def on_api(conn: Any, srv: FakeEslServer, cmd: str) -> bool:
++        if srv.mode == 'late' and cmd == 'uptime s':
++            time.sleep(0.5)  # longer than the read timeout; the reply arrives too late
++            conn.send(api_response(b'111\n'))
++            return True
++        conn.send(api_response(srv.responses[cmd]))
++        return True
++
++    server = make_server(make_handler(on_api=on_api))
++    check = make_check(server)
++    dd_run_check(check)
++    server.mode = 'late'
++    dd_run_check(check)  # times out on the reused connection, reconnect also times out
++    server.mode = 'good'
++    dd_run_check(check)
++    last_uptime = aggregator.metrics('freeswitch.uptime')[-1].value
++    assert last_uptime == 3401  # never the late value from the abandoned stream
++
++
++# ---------------------------------------------------------------------------------------------------------
++# Command safety
++# ---------------------------------------------------------------------------------------------------------
++
++DISALLOWED = [
++    'originate user/1000 &echo',
++    'bridge',
++    'hupall',
++    'uuid_kill abc',
++    'system id',
++    'bgapi uptime s',
++    'fsctl shutdown',
++    'shutdown',
++    'unload mod_event_socket',
++    'eval ${hostname}',
++    'sched_api +1 none hupall',
++    'status',
++    'uptime',
++    'uptime s ',
++    'UPTIME S',
++    'show channels',
++    'show channels count as json',
++    'uptime s\nhupall',
++    'uptime s\r\n\r\napi hupall',
++    'show channels count\n\nexit',
++    '',
++]
++
++
++@pytest.mark.parametrize('command', DISALLOWED)
++def test_client_rejects_commands_outside_the_allowlist(command: str, make_server: MakeServer) -> None:
++    server = make_server()
++    client = EslClient('127.0.0.1', server.port, SENTINEL_PASSWORD, connect_timeout=0.5, read_timeout=0.3)
++    client.connect(time.monotonic() + 2)
++    with pytest.raises(esl.EslCommandNotAllowed) as exc:
++        client.api(command, time.monotonic() + 2)
++    assert command.strip() not in str(exc.value) or not command.strip()
++    time.sleep(0.1)
++    assert server.api_lines == []
++    client.close()
++
++
++def test_allowlist_is_exactly_two_commands() -> None:
++    assert esl.ALLOWED_COMMANDS == {'uptime s', 'show channels count'}
++
++
++def test_only_expected_lines_reach_the_server_over_many_runs(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None]
++) -> None:
++    server = make_server()
++    check = make_check(server)
++    for _ in range(10):
++        dd_run_check(check)
++    assert set(server.lines) == {'auth ' + SENTINEL_PASSWORD, 'api uptime s', 'api show channels count'}
++
++
++# ---------------------------------------------------------------------------------------------------------
++# Secrets and process safety
++# ---------------------------------------------------------------------------------------------------------
++
++
++def _assert_no_sentinel(aggregator: AggregatorStub, caplog: pytest.LogCaptureFixture) -> None:
++    assert SENTINEL_PASSWORD not in caplog.text
++    for stubs in aggregator._metrics.values():
++        for stub in stubs:
++            assert SENTINEL_PASSWORD not in ' '.join(stub.tags)
++            assert SENTINEL_PASSWORD not in stub.name
++    assert not aggregator.service_check_names
++
++
++def _leaky_handler(mode: str) -> Any:
++    """A hostile server that echoes the password back in every way it can."""
++    echo = SENTINEL_PASSWORD.encode()
++
++    def on_auth(conn: Any, srv: FakeEslServer, line: str) -> bool:
++        conn.send(b'Content-Type: command/reply\nReply-Text: -ERR bad ' + echo + b'\n\n' + DISCONNECT)
++        return False
++
++    def on_api(conn: Any, srv: FakeEslServer, cmd: str) -> bool:
++        if mode == 'err_body':
++            conn.send(api_response(b'-ERR ' + echo + b'\n'))
++        elif mode == 'garbage_body':
++            conn.send(api_response(echo + b' not a number\n'))
++        elif mode == 'bad_header':
++            conn.send(b'Content-Type: api/response\n' + echo + b'\n\n')
++        return mode != 'bad_header'
++
++    return make_handler(on_auth=on_auth if mode == 'auth' else None, on_api=on_api if mode != 'auth' else None)
++
++
++@pytest.mark.parametrize('mode', ['auth', 'err_body', 'garbage_body', 'bad_header'])
++def test_password_never_leaks_even_if_the_server_echoes_it(
++    mode: str,
++    make_server: MakeServer,
++    make_check: MakeCheck,
++    dd_run_check: Callable[..., None],
++    aggregator: AggregatorStub,
++    caplog: pytest.LogCaptureFixture,
++) -> None:
++    caplog.set_level(logging.DEBUG)
++    server = make_server(_leaky_handler(mode), password='unrelated')
++    check = make_check(server)
++    dd_run_check(check)
++    _assert_no_sentinel(aggregator, caplog)
++    assert SENTINEL_PASSWORD not in repr(check)
++    assert SENTINEL_PASSWORD not in repr(check._client)
++
++
++def test_exceptions_do_not_contain_credentials(make_server: MakeServer) -> None:
++    def reject(conn: Any, srv: FakeEslServer, line: str) -> bool:
++        conn.send(command_reply('-ERR invalid') + DISCONNECT)
++        return False
++
++    def junk(conn: Any, srv: FakeEslServer, line: str) -> bool:
++        conn.send(b'Content-Type: x\n\n')
++        return False
++
++    for handler in (make_handler(on_auth=reject), make_handler(greeting=DISCONNECT), make_handler(on_auth=junk)):
++        server = make_server(handler)
++        client = EslClient('127.0.0.1', server.port, SENTINEL_PASSWORD, 'u@d', 0.5, 0.3)
++        with pytest.raises(esl.EslError) as exc:
++            client.connect(time.monotonic() + 2)
++            client.api('uptime s', time.monotonic() + 2)
++        text = str(exc.value) + repr(exc.value) + ''.join(repr(a) for a in exc.value.args)
++        assert SENTINEL_PASSWORD not in text
++        assert exc.value.__cause__ is None
++        assert exc.value.__context__ is None
++        assert SENTINEL_PASSWORD not in repr(client)
++        client.close()
++
++
++def test_check_spawns_no_processes_and_starts_no_threads(
++    monkeypatch: pytest.MonkeyPatch,
++    make_server: MakeServer,
++    make_check: MakeCheck,
++    dd_run_check: Callable[..., None],
++) -> None:
++    import os
++    import subprocess
++
++    def boom(*args: Any, **kwargs: Any) -> None:
++        raise AssertionError('process execution attempted')
++
++    for target, name in [
++        (subprocess, 'Popen'),
++        (subprocess, 'run'),
++        (os, 'system'),
++        (os, 'popen'),
++        (os, 'execv'),
++        (os, 'posix_spawn'),
++    ]:
++        monkeypatch.setattr(target, name, boom)
++
++    server = make_server()
++    check = make_check(server)
++    dd_run_check(check)
++    before = set(threading.enumerate())  # includes the fake server's own threads
++    for _ in range(3):
++        dd_run_check(check)
++    assert set(threading.enumerate()) == before
++
++
++def test_source_has_no_process_thread_or_environment_access() -> None:
++    package = pathlib.Path(esl.__file__).parent
++    for path in (package / 'esl.py', package / 'check.py'):
++        text = path.read_text()
++        for needle in ('subprocess', 'import os', 'os.environ', 'getenv', 'threading', 'import shlex', 'os.system'):
++            assert needle not in text, (path.name, needle)
++
++
++# ---------------------------------------------------------------------------------------------------------
++# Multiple instances and bounded resources
++# ---------------------------------------------------------------------------------------------------------
++
++
++def test_instances_are_independent(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    pw_a, pw_b = 'password-for-A-xyz', 'password-for-B-xyz'
++    server_a = make_server(password=pw_a)
++    server_b = make_server(password=pw_b)
++    server_b.responses['show channels count'] = b'\n8 total.\n'
++    check_a = make_check(server_a, password=pw_a, tags=['instance:a'])
++    check_b = make_check(server_b, password='wrong-password', tags=['instance:b'])
++
++    dd_run_check(check_a)
++    dd_run_check(check_b)
++    dd_run_check(check_a)
++
++    tags_a = ['freeswitch_host:127.0.0.1', 'freeswitch_port:{}'.format(server_a.port), 'instance:a']
++    tags_b = ['freeswitch_host:127.0.0.1', 'freeswitch_port:{}'.format(server_b.port), 'instance:b']
++    aggregator.assert_metric('freeswitch.can_connect', 1, tags=tags_a, count=2)
++    aggregator.assert_metric('freeswitch.can_connect', 0, tags=tags_b, count=1)
++    aggregator.assert_metric('freeswitch.channels.active', 4, tags=tags_a, count=2)
++    aggregator.assert_metric('freeswitch.channels.active', count=0, tags=tags_b)
++    aggregator.assert_metric_has_tag('freeswitch.collection.errors', 'error_type:auth', count=1)
++    assert server_a.connections == 1
++    assert server_b.connections == 1
++    assert all(pw_b not in line for line in server_a.lines)
++    assert all(pw_a not in line for line in server_b.lines)
++
++
++def test_repeated_runs_use_bounded_resources(
++    make_server: MakeServer, make_check: MakeCheck, dd_run_check: Callable[..., None], aggregator: AggregatorStub
++) -> None:
++    server = make_server()
++    check = make_check(server)
++    dd_run_check(check)
++    threads_before = set(threading.enumerate())
++    for _ in range(199):
++        dd_run_check(check)
++
++    assert server.connections == 1
++    assert len(server.api_lines) == 400
++    assert set(threading.enumerate()) == threads_before
++    assert check._client is not None and check._client._buf == b''
++    tag_sets = {tuple(sorted(s.tags)) for name in ALL_METRICS for s in aggregator.metrics(name)}
++    assert len(tag_sets) == 1  # no tag growth
++
++
++def test_closed_client_does_not_leak_sockets(make_server: MakeServer) -> None:
++    server = make_server()
++    client = EslClient('127.0.0.1', server.port, SENTINEL_PASSWORD, connect_timeout=0.5, read_timeout=0.3)
++    for _ in range(20):
++        client.connect(time.monotonic() + 2)
++        assert client.connected
++        client.close()
++        assert not client.connected
++    assert client._sock is None

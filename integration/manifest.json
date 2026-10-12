@@ -1,0 +1,46 @@
+{
+  "manifest_version": "2.0.0",
+  "app_uuid": "dc543065-c1c2-4143-9ffa-5ec9fb6c3c6b",
+  "app_id": "freeswitch",
+  "owner": "integrations-developer-platform",
+  "display_on_public_website": false,
+  "tile": {
+    "overview": "README.md#Overview",
+    "configuration": "README.md#Setup",
+    "support": "README.md#Support",
+    "changelog": "CHANGELOG.md",
+    "description": "Monitor the availability and activity of a FreeSWITCH server.",
+    "title": "FreeSWITCH",
+    "media": [],
+    "classifier_tags": [
+      "Supported OS::Linux",
+      "Category::Network",
+      "Category::Metrics",
+      "Offering::Integration",
+      "Submitted Data Type::Metrics"
+    ]
+  },
+  "assets": {
+    "integration": {
+      "auto_install": true,
+      "source_type_id": 91734645,
+      "source_type_name": "FreeSWITCH",
+      "configuration": {
+        "spec": "assets/configuration/spec.yaml"
+      },
+      "events": {
+        "creates_events": false
+      },
+      "metrics": {
+        "prefix": "freeswitch.",
+        "check": "freeswitch.can_connect",
+        "metadata_path": "metadata.csv"
+      }
+    }
+  },
+  "author": {
+    "support_email": "TODO-maintainer-support-email@example.invalid",
+    "homepage": "https://github.com/DataDog/integrations-extras",
+    "name": "Community"
+  }
+}

@@ -1,0 +1,7 @@
+<include>
+  <X-PRE-PROCESS cmd="set" data="domain=lab.local"/>
+  <X-PRE-PROCESS cmd="set" data="default_password_disabled=true"/>
+  <!-- ESL password: read from the Docker secret file (never from argv/env) -->
+  <X-PRE-PROCESS cmd="exec-set" data="esl_password=cat /run/secrets/esl_password"/>
+  <X-PRE-PROCESS cmd="exec-set" data="lab_subnet=printenv LAB_SUBNET"/>
+</include>

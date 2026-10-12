@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+"""FreeSWITCH state sampler for the lab (runs inside the container).
+
+  esl-measure --snapshot                         one JSON object
+  esl-measure --interval 1 --max-seconds 300     JSON lines until /tmp/lab-measure.stop appears
+  esl-measure --summarize < samples.jsonl        summary of a sample stream
+
+TOTAL counters come from FreeSWITCH itself and include everything on the server.
+show_calls_rows is the raw row count of `show calls`; for one bridged loopback test call FreeSWITCH
+returns 3 rows, so it is NOT a call count. Use lab_legs for "test calls in progress".
+TEST counters (lab_legs) count only channels whose UUID starts with "lab-", i.e. the near leg of
+calls created by esl-load. Loopback channels (loopback_channels) include both legs of every
+loopback pair, whoever created them.
+"""
+import json
+import os
+import re
+import sys
+import time
+
+import esl_lab
+from esl_lab import Conn, Fail
+
+STOP_FILE = "/tmp/lab-measure.stop"
+STATUS_RE = {
+    "sessions_since_startup": re.compile(r"^(\d+) session\(s\) since startup", re.M),
+    "sessions_current": re.compile(r"^(\d+) session\(s\) - peak (\d+)", re.M),
+    "sessions_max": re.compile(r"^(\d+) session\(s\) max", re.M),
+    "rate": re.compile(r"^(\d+) session\(s\) per Sec out of max (\d+), peak (\d+)", re.M),
+}
+
+
+def read(path):
+    try:
+        with open(path) as fh:
+            return fh.read()
+    except OSError:
+        return None
+
+
+def fs_pid():
+    for d in os.listdir("/proc"):
+        if d.isdigit() and (read("/proc/%s/comm" % d) or "").strip() == "freeswitch":
+            return int(d)
+    return None
+
+
+def proc_stats(pid):
+    out = {"fs_pid": pid, "fs_rss_kb": None, "fs_cpu_ticks": None, "fs_threads": None}
+    if not pid:
+        return out
+    st = read("/proc/%d/status" % pid) or ""
+    m = re.search(r"^VmRSS:\s+(\d+) kB", st, re.M)
+    out["fs_rss_kb"] = int(m.group(1)) if m else None
+    m = re.search(r"^Threads:\s+(\d+)", st, re.M)
+    out["fs_threads"] = int(m.group(1)) if m else None
+    stat = read("/proc/%d/stat" % pid)
+    if stat:
+        f = stat.rsplit(")", 1)[1].split()
+        out["fs_cpu_ticks"] = int(f[11]) + int(f[12])      # utime + stime
+    return out
+
+
+def cgroup_stats():
+    out = {"cgroup_mem_bytes": None, "cgroup_cpu_usec": None}
+    mem = read("/sys/fs/cgroup/memory.current")
+    if mem and mem.strip().isdigit():
+        out["cgroup_mem_bytes"] = int(mem)
+    m = re.search(r"^usage_usec (\d+)", read("/sys/fs/cgroup/cpu.stat") or "", re.M)
+    out["cgroup_cpu_usec"] = int(m.group(1)) if m else None
+    return out
+
+
+def rows(conn, cmd):
+    text = conn.api(cmd, 10).strip()
+    if not text or text.startswith("-ERR"):
+        return []
+    try:
+        return json.loads(text).get("rows", [])
+    except ValueError:
+        return []
+
+
+def sample(conn):
+    t = time.time()
+    s = {"ts": round(t, 3), "iso": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + ".%03dZ" % (t % 1 * 1000)}
+    status = conn.api("status", 5)
+    m = STATUS_RE["sessions_current"].search(status)
+    s["sessions_current"] = int(m.group(1)) if m else None
+    s["sessions_peak"] = int(m.group(2)) if m else None
+    m = STATUS_RE["sessions_since_startup"].search(status)
+    s["sessions_since_startup"] = int(m.group(1)) if m else None
+    m = STATUS_RE["sessions_max"].search(status)
+    s["sessions_max"] = int(m.group(1)) if m else None
+    m = STATUS_RE["rate"].search(status)
+    s["sessions_per_sec_max"] = int(m.group(2)) if m else None
+    chans = rows(conn, "show channels as json")
+    s["total_channels"] = len(chans)
+    s["loopback_channels"] = sum(1 for c in chans if c.get("name", "").startswith("loopback/"))
+    s["lab_legs"] = sum(1 for c in chans if c.get("uuid", "").startswith("lab-"))
+    s["show_calls_rows"] = len(rows(conn, "show calls as json"))
+    s.update(proc_stats(fs_pid()))
+    s.update(cgroup_stats())
+    return s
+
+
+def stream(interval, max_seconds):
+    conn = Conn(timeout=5)
+    try:
+        if os.path.exists(STOP_FILE):
+            os.remove(STOP_FILE)
+    except OSError:
+        pass
+    end = time.monotonic() + max_seconds
+    try:
+        while time.monotonic() < end and not os.path.exists(STOP_FILE):
+            t0 = time.monotonic()
+            print(json.dumps(sample(conn)), flush=True)
+            time.sleep(max(0.0, interval - (time.monotonic() - t0)))
+    finally:
+        conn.close()
+        try:
+            os.remove(STOP_FILE)
+        except OSError:
+            pass
+
+
+def summarize(lines):
+    samples = [json.loads(l) for l in lines if l.strip().startswith("{")]
+    if not samples:
+        return {"error": "no samples"}
+    first, last = samples[0], samples[-1]
+
+    def peak(k):
+        vals = [s[k] for s in samples if s.get(k) is not None]
+        return max(vals) if vals else None
+
+    cpu = []
+    for a, b in zip(samples, samples[1:]):
+        dt = b["ts"] - a["ts"]
+        if dt > 0 and a.get("cgroup_cpu_usec") is not None and b.get("cgroup_cpu_usec") is not None:
+            cpu.append(100.0 * (b["cgroup_cpu_usec"] - a["cgroup_cpu_usec"]) / 1e6 / dt)
+    fs_cpu = []
+    hz = os.sysconf("SC_CLK_TCK")
+    for a, b in zip(samples, samples[1:]):
+        dt = b["ts"] - a["ts"]
+        if dt > 0 and a.get("fs_cpu_ticks") is not None and b.get("fs_cpu_ticks") is not None:
+            fs_cpu.append(100.0 * (b["fs_cpu_ticks"] - a["fs_cpu_ticks"]) / hz / dt)
+    mem = [s["cgroup_mem_bytes"] for s in samples if s.get("cgroup_mem_bytes") is not None]
+    rss = [s["fs_rss_kb"] for s in samples if s.get("fs_rss_kb") is not None]
+    active = [s for s in samples if (s.get("total_channels") or 0) > (first.get("total_channels") or 0)]
+    return {
+        "samples": len(samples),
+        "window": {"start": first["iso"], "end": last["iso"], "seconds": round(last["ts"] - first["ts"], 1)},
+        "baseline_first_sample": {k: first.get(k) for k in ("total_channels", "show_calls_rows", "sessions_current", "lab_legs")},
+        "peak": {k: peak(k) for k in ("total_channels", "loopback_channels", "show_calls_rows", "sessions_current", "lab_legs")},
+        "final_sample": {k: last.get(k) for k in ("total_channels", "show_calls_rows", "sessions_current", "lab_legs")},
+        "returned_to_baseline": (last.get("total_channels") == first.get("total_channels")
+                                 and last.get("show_calls_rows") == first.get("show_calls_rows")),
+        "seconds_with_extra_channels": len(active),
+        "total_server_counters": {
+            "sessions_since_startup_start": first.get("sessions_since_startup"),
+            "sessions_since_startup_end": last.get("sessions_since_startup"),
+            "sessions_created_during_window": (last.get("sessions_since_startup") or 0) - (first.get("sessions_since_startup") or 0),
+            "sessions_max": last.get("sessions_max"),
+            "sessions_peak_since_startup": last.get("sessions_peak"),
+        },
+        "resources": {
+            "container_cpu_pct_avg": round(sum(cpu) / len(cpu), 2) if cpu else None,
+            "container_cpu_pct_peak": round(max(cpu), 2) if cpu else None,
+            "freeswitch_cpu_pct_avg": round(sum(fs_cpu) / len(fs_cpu), 2) if fs_cpu else None,
+            "freeswitch_cpu_pct_peak": round(max(fs_cpu), 2) if fs_cpu else None,
+            "container_mem_mib_first": round(mem[0] / 1048576, 1) if mem else None,
+            "container_mem_mib_peak": round(max(mem) / 1048576, 1) if mem else None,
+            "freeswitch_rss_mib_first": round(rss[0] / 1024, 1) if rss else None,
+            "freeswitch_rss_mib_peak": round(max(rss) / 1024, 1) if rss else None,
+            "freeswitch_threads_peak": peak("fs_threads"),
+        },
+    }
+
+
+def main(argv):
+    args = {"interval": 1.0, "max-seconds": 300.0}
+    mode = None
+    it = iter(argv)
+    for a in it:
+        if a in ("--snapshot", "--summarize"):
+            mode = a[2:]
+        elif a in ("--interval", "--max-seconds"):
+            try:
+                args[a[2:]] = float(next(it))
+            except (StopIteration, ValueError):
+                sys.stderr.write("esl-measure: bad value for %s\n" % a)
+                return 4
+            mode = mode or "stream"
+        else:
+            sys.stderr.write("esl-measure: unknown option\n")
+            return 4
+    if mode == "summarize":
+        print(json.dumps(summarize(sys.stdin.read().splitlines()), indent=2))
+        return 0
+    if not 0.2 <= args["interval"] <= 60 or not 1 <= args["max-seconds"] <= 3600:
+        sys.stderr.write("esl-measure: --interval 0.2..60, --max-seconds 1..3600\n")
+        return 4
+    try:
+        if mode == "snapshot":
+            conn = Conn(timeout=5)
+            try:
+                print(json.dumps(sample(conn)))
+            finally:
+                conn.close()
+        else:
+            stream(args["interval"], args["max-seconds"])
+    except Fail as exc:
+        sys.stderr.write("esl-measure: %s\n" % exc.message)
+        return exc.code if exc.code in (2, 3, 4) else 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

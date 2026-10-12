@@ -1,0 +1,71 @@
+## All options defined here are available to all instances.
+#
+init_config:
+
+    ## @param service - string - optional
+    ## Attach the tag `service:<SERVICE>` to every metric, event, and service check emitted by this integration.
+    ##
+    ## Additionally, this sets the default `service` for every log source.
+    #
+    # service: <SERVICE>
+
+## Every instance is scheduled independently of the others.
+#
+instances:
+
+    ## @param host - string - required
+    ## The IP address or hostname of the FreeSWITCH server's Event Socket (ESL) listener. Prefer an IP address:
+    ## a hostname is resolved by the operating system, which the check cannot interrupt.
+    #
+  - host: 127.0.0.1
+
+    ## @param port - integer - optional - default: 8021
+    ## The TCP port of the FreeSWITCH Event Socket listener (`listen-port` in `event_socket.conf`).
+    #
+    # port: 8021
+
+    ## @param username - string - optional
+    ## Optional FreeSWITCH directory user, in the form `user@domain`. If set, the check authenticates with
+    ## `userauth`, `password` is that user's `esl-password`, and the check refuses the account unless FreeSWITCH
+    ## reports its `esl-allowed-api` as exactly `uptime,show`. It never falls back to the shared password.
+    ## If not set, `password` is the shared Event Socket password, which grants full control of FreeSWITCH.
+    #
+    # username: <USER>@<DOMAIN>
+
+    ## @param password - string - required
+    ## The Event Socket password, or the `esl-password` of `username` if a username is set.
+    ## Use the Agent's secrets management, for example `ENC[<HANDLE>]`, rather than plain text.
+    #
+    password: <PASSWORD>
+
+    ## @param connect_timeout - number - optional - default: 3
+    ## The number of seconds to wait for the TCP connection to FreeSWITCH to be established.
+    #
+    # connect_timeout: 3
+
+    ## @param read_timeout - number - optional - default: 3
+    ## The number of seconds to wait for each response from FreeSWITCH.
+    #
+    # read_timeout: 3
+
+    ## @param tags - list of strings - optional
+    ## A list of tags to attach to every metric and service check emitted by this instance.
+    ##
+    ## Learn more about tagging at https://docs.datadoghq.com/tagging
+    #
+    # tags:
+    #   - <KEY_1>:<VALUE_1>
+    #   - <KEY_2>:<VALUE_2>
+
+    ## @param min_collection_interval - number - optional - default: 15
+    ## This changes the collection interval of the check. For more information, see:
+    ## https://docs.datadoghq.com/developers/write_agent_check/#collection-interval
+    #
+    # min_collection_interval: 15
+
+    ## @param empty_default_hostname - boolean - optional - default: false
+    ## This forces the check to send metrics with no hostname.
+    ##
+    ## This is useful for cluster-level checks.
+    #
+    # empty_default_hostname: false

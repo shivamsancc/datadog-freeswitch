@@ -1,0 +1,16 @@
+<profile name="internal">
+  <settings>
+    <param name="sip-ip" value="$${local_ip_v4}"/>
+    <param name="rtp-ip" value="$${local_ip_v4}"/>
+    <param name="sip-port" value="5060"/>
+    <param name="context" value="default"/>
+    <param name="dialplan" value="XML"/>
+    <!-- Challenge all inbound INVITEs; the directory is empty, so nothing is accepted from outside -->
+    <param name="auth-calls" value="true"/>
+    <param name="inbound-codec-prefs" value="PCMU,PCMA"/>
+    <param name="outbound-codec-prefs" value="PCMU,PCMA"/>
+    <param name="manage-presence" value="false"/>
+    <param name="nonce-ttl" value="60"/>
+    <param name="disable-register" value="true"/>
+  </settings>
+</profile>

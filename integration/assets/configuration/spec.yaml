@@ -1,0 +1,64 @@
+name: FreeSWITCH
+files:
+- name: freeswitch.yaml
+  options:
+  - template: init_config
+    options:
+    - template: init_config/default
+  - template: instances
+    options:
+    - name: host
+      required: true
+      description: |
+        The IP address or hostname of the FreeSWITCH server's Event Socket (ESL) listener. Prefer an IP address:
+        a hostname is resolved by the operating system, which the check cannot interrupt.
+      value:
+        type: string
+        example: 127.0.0.1
+    - name: port
+      description: |
+        The TCP port of the FreeSWITCH Event Socket listener (`listen-port` in `event_socket.conf`).
+      value:
+        type: integer
+        minimum: 1
+        maximum: 65535
+        example: 8021
+        display_default: 8021
+    - name: username
+      description: |
+        Optional FreeSWITCH directory user, in the form `user@domain`. If set, the check authenticates with
+        `userauth`, `password` is that user's `esl-password`, and the check refuses the account unless FreeSWITCH
+        reports its `esl-allowed-api` as exactly `uptime,show`. It never falls back to the shared password.
+        If not set, `password` is the shared Event Socket password, which grants full control of FreeSWITCH.
+      value:
+        type: string
+        example: <USER>@<DOMAIN>
+    - name: password
+      required: true
+      secret: true
+      description: |
+        The Event Socket password, or the `esl-password` of `username` if a username is set.
+        Use the Agent's secrets management, for example `ENC[<HANDLE>]`, rather than plain text.
+      value:
+        type: string
+        example: <PASSWORD>
+    - name: connect_timeout
+      description: |
+        The number of seconds to wait for the TCP connection to FreeSWITCH to be established.
+      value:
+        type: number
+        minimum: 0.1
+        maximum: 30
+        example: 3
+        display_default: 3
+    - name: read_timeout
+      description: |
+        The number of seconds to wait for each response from FreeSWITCH.
+      value:
+        type: number
+        minimum: 0.1
+        maximum: 30
+        example: 3
+        display_default: 3
+    - template: instances/tags
+    - template: instances/global

@@ -1,0 +1,11 @@
+<configuration name="switch.conf" description="Core Configuration">
+  <settings>
+    <param name="colorize-console" value="false"/>
+    <param name="max-sessions" value="200"/>
+    <param name="sessions-per-second" value="30"/>
+    <param name="loglevel" value="info"/>
+    <!-- Narrow RTP range; keep in sync with the port mapping in docker-compose.yml -->
+    <param name="rtp-start-port" value="16384"/>
+    <param name="rtp-end-port" value="16483"/>
+  </settings>
+</configuration>
