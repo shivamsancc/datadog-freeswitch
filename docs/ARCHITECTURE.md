@@ -10,7 +10,7 @@ flowchart LR
     end
     subgraph INT["integration/"]
         CHECK["freeswitch check<br/>(datadog_checks/freeswitch)"]
-        FAKE["tests/fake_esl.py<br/>in-process fake ESL server"]
+        FAKE["integration/tests/fake_esl.py<br/>in-process fake ESL server"]
     end
     AGENT["Datadog Agent"]
     DD["Datadog backend"]

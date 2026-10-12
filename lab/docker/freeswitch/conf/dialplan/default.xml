@@ -16,7 +16,7 @@
       </condition>
     </extension>
 
-    <!-- Synthetic-call harness destinations (scripts/run-call-load.sh). Every one is bounded by
+    <!-- Synthetic-call harness destinations (lab/scripts/run-call-load.sh). Every one is bounded by
          sched_hangup, none leaves FreeSWITCH, and there is deliberately no catch-all route:
          unknown numbers fail with NO_ROUTE_DESTINATION. -->
 

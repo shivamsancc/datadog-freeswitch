@@ -3,7 +3,9 @@
 > This is the detailed manual of the `lab/` component of the repository. **Run every command in this document
 > from the repository root** (the scripts change to the root themselves, so `lab/scripts/lab-up.sh` works from any
 > directory). Compose, `.env`, `secrets/` and `results/` stay at the root. For the project overview and the Datadog
-> integration see the [root README](../README.md).
+> integration see the [root README](../README.md). The reports in [`docs/`](docs/) are dated records written before the
+> repository was reorganized: commands in them use the pre-restructure paths (`scripts/…`, `tests/…`, `docker/…`), which
+> are now under `lab/`.
 
 Development lab for a Datadog Agent integration for FreeSWITCH.
 
