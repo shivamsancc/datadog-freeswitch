@@ -17,7 +17,7 @@ from datadog_checks.dev.utils import get_metadata_metrics
 from datadog_checks.freeswitch import FreeswitchCheck, __version__, esl
 from datadog_checks.freeswitch.esl import EslClient
 
-from .conftest import SENTINEL_PASSWORD
+from .conftest import FAST_TIMEOUTS, SENTINEL_PASSWORD
 from .fake_esl import (
     DISCONNECT,
     FakeEslServer,
@@ -541,7 +541,7 @@ def test_no_greeting_times_out(
 ) -> None:
     server = make_server(make_handler(greeting=None))
     start = time.monotonic()
-    one_failure(server, make_check, dd_run_check, aggregator, 'timeout')
+    one_failure(server, make_check, dd_run_check, aggregator, 'timeout', **FAST_TIMEOUTS)
     assert time.monotonic() - start < 2
 
 
@@ -553,7 +553,7 @@ def test_stall_during_authentication_times_out(
         return False
 
     server = make_server(make_handler(on_auth=on_auth))
-    one_failure(server, make_check, dd_run_check, aggregator, 'timeout')
+    one_failure(server, make_check, dd_run_check, aggregator, 'timeout', **FAST_TIMEOUTS)
 
 
 def test_stall_during_command_times_out(
@@ -564,7 +564,7 @@ def test_stall_during_command_times_out(
         return False
 
     server = make_server(make_handler(on_api=on_api))
-    one_failure(server, make_check, dd_run_check, aggregator, 'timeout')
+    one_failure(server, make_check, dd_run_check, aggregator, 'timeout', **FAST_TIMEOUTS)
     assert server.connections == 1
 
 
@@ -577,7 +577,7 @@ def test_slow_drip_response_is_bounded_by_one_read_timeout(
 
     server = make_server(make_handler(on_api=on_api))
     start = time.monotonic()
-    one_failure(server, make_check, dd_run_check, aggregator, 'timeout', read_timeout=0.3)
+    one_failure(server, make_check, dd_run_check, aggregator, 'timeout', **FAST_TIMEOUTS)
     assert time.monotonic() - start < 1.5
 
 
@@ -799,7 +799,8 @@ def test_protocol_failures(
     aggregator: AggregatorStub,
 ) -> None:
     server = make_server(_api_reply_handler(payload, then_close))
-    one_failure(server, make_check, dd_run_check, aggregator, error_type)
+    timeouts = FAST_TIMEOUTS if error_type == 'timeout' else {}
+    one_failure(server, make_check, dd_run_check, aggregator, error_type, **timeouts)
     assert server.connections == 1
 
 
@@ -834,7 +835,7 @@ def test_failure_closes_the_connection_so_a_late_reply_cannot_desynchronize(
         return True
 
     server = make_server(make_handler(on_api=on_api))
-    check = make_check(server)
+    check = make_check(server, **FAST_TIMEOUTS)
     dd_run_check(check)
     server.mode = 'late'
     dd_run_check(check)  # times out on the reused connection, reconnect also times out

@@ -71,6 +71,18 @@ The upstream checkout is authoritative and `integration/` is a manually synchron
 safe synchronization steps and the table of which command runs where are in
 [UPSTREAM_CONTRIBUTION.md](UPSTREAM_CONTRIBUTION.md).
 
+## Read-only checks of the running lab
+
+These change nothing and are safe at any time:
+
+```shell
+docker compose config -q                                              # Compose file parses
+docker compose config | grep -E "context:|source:"                    # intended paths
+docker inspect "$(docker compose ps -q freeswitch)" \
+  --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'   # actual bind-mount source
+docker compose ps                                                     # container health
+```
+
 ## Migrating the running lab to `lab/docker`
 
 State today: the repository contains both the legacy `docker/` and the new `lab/docker/`. They differ only in comment

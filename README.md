@@ -84,14 +84,15 @@ Facts as of the last run, not CI results (this repository defines no CI):
 
 | Area | Status |
 |---|---|
-| Tests | 175 passed and 1 expected failure (`xfail`, the documented defect below) |
+| Tests | 181 passed, 0 expected failures (fake ESL server; no live FreeSWITCH needed) |
 | Platforms | macOS arm64 and Linux aarch64, Python 3.13; x86_64, other Python versions and Windows are untested |
 | Live run | Agent 7.80.3 on macOS collected from the lab through a temporary localhost forwarder |
 | Backend | `freeswitch.can_connect` and `freeswitch.uptime` were seen in Metrics Explorer; the other metrics are unverified there |
-| Upstream | Not submitted; no branch exists on the fork or upstream yet |
+| Upstream | Not submitted. The local branch `add-freeswitch-integration` has no commits of its own: the contribution is uncommitted working-tree changes. Nothing is pushed to the fork |
 
-**Open defect (separate task):** an empty `host` is accepted and resolves to loopback instead of failing validation.
-Tracked by a strict `xfail` test in `integration/tests/test_campaign.py`.
+**Resolved:** an empty or whitespace-only `host` is now rejected during configuration validation
+(`host must not be empty`), with regression tests in `integration/tests/test_campaign.py`. The fix exists in the
+`integrations-extras` working tree and in `integration/`; neither is committed.
 
 ## Security
 

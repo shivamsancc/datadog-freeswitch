@@ -1,4 +1,5 @@
-# Keep secrets, VCS data and non-image content out of any build context rooted at the repository.
+# Applies only to a build context rooted at the repository (the Compose build context is lab/docker/freeswitch and
+# has its own .dockerignore). Keep secrets, VCS data and non-image content out of any root-level context.
 .git
 .env
 secrets

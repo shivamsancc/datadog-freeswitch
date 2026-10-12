@@ -11,3 +11,12 @@
 #         raise ValueError('my_number max value is 10, got %s' % str(values.get('my_number')))
 #
 #     return values
+
+
+def instance_host(value, **kwargs):
+    # An empty host would be resolved by getaddrinfo() to the loopback address and produce an empty
+    # freeswitch_host tag, silently monitoring the wrong endpoint.
+    if isinstance(value, str) and not value.strip():
+        raise ValueError('host must not be empty')
+
+    return value

@@ -15,7 +15,7 @@ instances:
 
     ## @param host - string - required
     ## The IP address or hostname of the FreeSWITCH server's Event Socket (ESL) listener. Prefer an IP address:
-    ## a hostname is resolved by the operating system, which the check cannot interrupt.
+    ## a hostname is resolved by the operating system, which the check cannot interrupt. Must not be empty.
     #
   - host: 127.0.0.1
 

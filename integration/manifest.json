@@ -3,7 +3,7 @@
   "app_uuid": "dc543065-c1c2-4143-9ffa-5ec9fb6c3c6b",
   "app_id": "freeswitch",
   "owner": "integrations-developer-platform",
-  "display_on_public_website": false,
+  "display_on_public_website": true,
   "tile": {
     "overview": "README.md#Overview",
     "configuration": "README.md#Setup",

@@ -68,14 +68,9 @@ def _error_tags(aggregator: AggregatorStub) -> set[str]:
         {'read_timeout': 31},
         {'read_timeout': 'soon'},
         {'password': ''},
-        pytest.param(
-            {'host': ''},
-            marks=pytest.mark.xfail(
-                strict=True,
-                reason='DEFECT: an empty host is accepted and getaddrinfo("") resolves to loopback, so the check '
-                'silently monitors 127.0.0.1/::1 with an empty freeswitch_host tag',
-            ),
-        ),
+        {'host': ''},
+        {'host': '   '},
+        {'host': '\t\n'},
     ],
     ids=[
         'port=0',
@@ -91,6 +86,8 @@ def _error_tags(aggregator: AggregatorStub) -> set[str]:
         'read_timeout=text',
         'password=empty',
         'host=empty',
+        'host=spaces',
+        'host=tab-newline',
     ],
 )
 def test_invalid_configuration_fails_before_connecting(
@@ -103,6 +100,18 @@ def test_invalid_configuration_fails_before_connecting(
     assert SENTINEL_PASSWORD not in str(exc.value)
     assert server.connections == 0
     assert server.lines == []
+
+
+@pytest.mark.parametrize('host', ['', '   ', '\t\n'], ids=['empty', 'spaces', 'tab-newline'])
+def test_blank_host_is_rejected_with_a_host_error(
+    host: str, make_server: MakeServer, make_check: MakeCheck, dd_run_check: Run
+) -> None:
+    server = make_server()
+    check = make_check(server, host=host)
+    with pytest.raises(Exception) as exc:
+        dd_run_check(check)
+    assert 'host must not be empty' in str(exc.value)
+    assert server.connections == 0
 
 
 @pytest.mark.parametrize('missing', ['host', 'password'])

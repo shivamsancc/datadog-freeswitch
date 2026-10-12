@@ -1,0 +1,7 @@
+# Applies to the build context lab/docker/freeswitch (the repository-root .dockerignore does not).
+# Nothing here is used by the Dockerfile; keep generated and local files out of the context.
+**/__pycache__
+**/*.pyc
+*.log
+.DS_Store
+.env

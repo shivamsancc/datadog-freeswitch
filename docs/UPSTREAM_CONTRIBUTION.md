@@ -103,8 +103,8 @@ From the `integrations-extras` checkout, on the contribution branch:
 4. Push the branch to the fork and open the PR against `DataDog/integrations-extras:master`, following that repository's
    contributing guide.
 
-Before submitting, disclose open defects (the empty-`host` validation gap is open and tracked by a strict `xfail`) and
-do not describe unrun checks as passed.
+Do not describe unrun checks as passed. The former empty-`host` defect is fixed (`instance_host` in
+`config_models/validators.py`) and covered by normal regression tests, not an `xfail`.
 
 ## Verification
 
@@ -124,10 +124,26 @@ print("broken links:", bad)
 PY
 ```
 
+## Current local state
+
+- The local branch `add-freeswitch-integration` points at the same commit as `master`; it has **no commits of its own**.
+  The contribution is the untracked `freeswitch/` directory plus edits to `.github/CODEOWNERS` and
+  `.github/workflows/test-all.yml`, all uncommitted.
+- The branch does not exist on the fork (`git ls-remote --heads fork` lists only `master`), so no URL for it works yet.
+- After the PR branch is pushed, file links take the form
+  `https://github.com/shivamsancc/integrations-extras/blob/add-freeswitch-integration/freeswitch/<path>`; do not add
+  them to any document before that push.
+
 ## Generated or one-off artifacts
 
-`lab/docs/SUBMISSION_DIFF.patch` is a snapshot of `git diff` of the upstream checkout taken before the extended test
-campaign and the README connection section. It is **stale** (it lacks `tests/test_campaign.py` and that README section)
-and is regenerated trivially from the upstream checkout. It is not referenced by any document and contains no secrets or
-absolute paths. Recommendation, pending your approval: remove it or regenerate it at PR time instead of keeping a
-second, drifting copy of the contribution.
+`lab/docs/SUBMISSION_DIFF.patch` is a manually saved snapshot taken before the extended test campaign and the README
+connection section. It is **stale**: it lacks `freeswitch/tests/test_campaign.py` and the later spec, validator and
+`conf.yaml.example` edits. It is not referenced by any document or script and contains no secrets or absolute paths.
+It is kept unchanged as a historical record. The authoritative source is Git, so regenerate a patch at PR time instead
+of maintaining one. From the `integrations-extras` checkout, after the contribution is committed on the PR branch:
+
+```shell
+git diff master...add-freeswitch-integration > /tmp/freeswitch-submission.patch
+```
+
+Before the commit exists, `git diff` does not show the untracked `freeswitch/` directory; use the committed diff above.

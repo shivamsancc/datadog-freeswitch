@@ -14,6 +14,9 @@ from .fake_esl import FakeEslServer, Handler
 
 # A distinctive value that must never show up in logs, exceptions, tags or object representations.
 SENTINEL_PASSWORD = 'SENTINEL-pw-7f3a9c1e-do-not-leak'
+DEFAULT_TIMEOUTS = {'connect_timeout': 3.0, 'read_timeout': 3.0}
+# For tests whose subject is a timeout: short, so that the stall they provoke ends quickly.
+FAST_TIMEOUTS = {'connect_timeout': 0.5, 'read_timeout': 0.3}
 
 
 @pytest.fixture
@@ -45,8 +48,9 @@ def make_check() -> Iterator[Callable[..., FreeswitchCheck]]:
             'host': '127.0.0.1',
             'port': server.port,
             'password': SENTINEL_PASSWORD,
-            'connect_timeout': 0.5,
-            'read_timeout': 0.3,
+            # Generous on purpose: a test that does not exercise a timeout must not depend on how quickly the
+            # fake server's thread is scheduled. Tests that expect a timeout pass FAST_TIMEOUTS.
+            **DEFAULT_TIMEOUTS,
             'tags': ['tier:test'],
         }
         inst.update(overrides)
