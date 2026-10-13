@@ -1,0 +1,325 @@
+{
+ "real_samples": {
+  "count": 30,
+  "mos_min": 0.99,
+  "mos_max": 4.5,
+  "mos_sum": 93.63
+ },
+ "A_burst": {
+  "sent_samples_per_type": 30,
+  "sent_at": 1791872806
+ },
+ "B_invalid": {
+  "sent_invalid_lines": 11,
+  "counters_before": {
+   "Event Packets": 0,
+   "Event Parse Errors": 0,
+   "Metric Packets": 131,
+   "Metric Parse Errors": 0,
+   "Udp Packets": 110,
+   "Udp Bytes": 10,
+   "Unterminated Metric Errors": 0,
+   "Service Check Packets": 0,
+   "Service Check Parse Errors": 0
+  },
+  "counters_after": {
+   "Event Packets": 0,
+   "Event Parse Errors": 0,
+   "Metric Packets": 136,
+   "Metric Parse Errors": 6,
+   "Udp Packets": 121,
+   "Udp Bytes": 10,
+   "Unterminated Metric Errors": 0,
+   "Service Check Packets": 0,
+   "Service Check Parse Errors": 0
+  }
+ },
+ "series_points": [
+  {
+   "metric": "experiment.rtp.mos_gauge",
+   "ts": 1791872800,
+   "value": 1.31,
+   "type": "gauge",
+   "tags": [
+    "direction:outbound"
+   ],
+   "interval": 10
+  },
+  {
+   "metric": "experiment.rtp.mos_gauge",
+   "ts": 1791872800,
+   "value": 1.49,
+   "type": "gauge",
+   "tags": [
+    "direction:inbound"
+   ],
+   "interval": 10
+  },
+  {
+   "metric": "experiment.rtp.mos_histogram.95percentile",
+   "ts": 1791872800,
+   "value": 4.5,
+   "type": "gauge",
+   "tags": [
+    "direction:inbound"
+   ],
+   "interval": 10
+  },
+  {
+   "metric": "experiment.rtp.mos_histogram.95percentile",
+   "ts": 1791872800,
+   "value": 4.5,
+   "type": "gauge",
+   "tags": [
+    "direction:outbound"
+   ],
+   "interval": 10
+  },
+  {
+   "metric": "experiment.rtp.mos_histogram.avg",
+   "ts": 1791872800,
+   "value": 2.966666666666667,
+   "type": "gauge",
+   "tags": [
+    "direction:inbound"
+   ],
+   "interval": 10
+  },
+  {
+   "metric": "experiment.rtp.mos_histogram.avg",
+   "ts": 1791872800,
+   "value": 3.2753333333333337,
+   "type": "gauge",
+   "tags": [
+    "direction:outbound"
+   ],
+   "interval": 10
+  },
+  {
+   "metric": "experiment.rtp.mos_histogram.count",
+   "ts": 1791872800,
+   "value": 1.5,
+   "type": "rate",
+   "tags": [
+    "direction:inbound"
+   ],
+   "interval": 10
+  },
+  {
+   "metric": "experiment.rtp.mos_histogram.count",
+   "ts": 1791872800,
+   "value": 1.5,
+   "type": "rate",
+   "tags": [
+    "direction:outbound"
+   ],
+   "interval": 10
+  },
+  {
+   "metric": "experiment.rtp.mos_histogram.max",
+   "ts": 1791872800,
+   "value": 4.5,
+   "type": "gauge",
+   "tags": [
+    "direction:inbound"
+   ],
+   "interval": 10
+  },
+  {
+   "metric": "experiment.rtp.mos_histogram.max",
+   "ts": 1791872800,
+   "value": 4.5,
+   "type": "gauge",
+   "tags": [
+    "direction:outbound"
+   ],
+   "interval": 10
+  },
+  {
+   "metric": "experiment.rtp.mos_histogram.median",
+   "ts": 1791872800,
+   "value": 3.3,
+   "type": "gauge",
+   "tags": [
+    "direction:inbound"
+   ],
+   "interval": 10
+  },
+  {
+   "metric": "experiment.rtp.mos_histogram.median",
+   "ts": 1791872800,
+   "value": 3.5,
+   "type": "gauge",
+   "tags": [
+    "direction:outbound"
+   ],
+   "interval": 10
+  },
+  {
+   "metric": "experiment.rtp.boundary_gauge",
+   "ts": 1791872810,
+   "value": 3,
+   "type": "gauge",
+   "tags": [
+    "direction:outbound"
+   ],
+   "interval": 10
+  }
+ ],
+ "sketch_points": [
+  {
+   "metric": "experiment.rtp.mos_distribution",
+   "tags": [
+    "direction:outbound"
+   ],
+   "ts": 1791872800,
+   "count": 15,
+   "min": 1.0,
+   "max": 4.5,
+   "avg": 3.275333333333333,
+   "sum": 49.13
+  },
+  {
+   "metric": "experiment.rtp.mos_distribution",
+   "tags": [
+    "direction:inbound"
+   ],
+   "ts": 1791872800,
+   "count": 15,
+   "min": 0.99,
+   "max": 4.5,
+   "avg": 2.966666666666667,
+   "sum": 44.5
+  },
+  {
+   "metric": "experiment.rtp.boundary_distribution",
+   "tags": [
+    "direction:outbound"
+   ],
+   "ts": 1791872810,
+   "count": 5,
+   "min": 3.0,
+   "max": 3.0,
+   "avg": 3.0,
+   "sum": 15.0
+  },
+  {
+   "metric": "experiment.rtp.tagged_distribution",
+   "tags": [
+    "codec:pcma",
+    "direction:inbound"
+   ],
+   "ts": 1791872810,
+   "count": 1,
+   "min": 4.0,
+   "max": 4.0,
+   "avg": 4.0,
+   "sum": 4.0
+  },
+  {
+   "metric": "experiment.rtp.tagged_distribution",
+   "tags": [
+    "codec:speex",
+    "direction:outbound"
+   ],
+   "ts": 1791872810,
+   "count": 1,
+   "min": 4.0,
+   "max": 4.0,
+   "avg": 4.0,
+   "sum": 4.0
+  },
+  {
+   "metric": "experiment.rtp.tagged_distribution",
+   "tags": [
+    "codec:pcmu",
+    "direction:inbound"
+   ],
+   "ts": 1791872810,
+   "count": 1,
+   "min": 4.0,
+   "max": 4.0,
+   "avg": 4.0,
+   "sum": 4.0
+  },
+  {
+   "metric": "experiment.rtp.tagged_distribution",
+   "tags": [
+    "codec:speex",
+    "direction:inbound"
+   ],
+   "ts": 1791872810,
+   "count": 1,
+   "min": 4.0,
+   "max": 4.0,
+   "avg": 4.0,
+   "sum": 4.0
+  },
+  {
+   "metric": "experiment.rtp.tagged_distribution",
+   "tags": [
+    "codec:pcmu",
+    "direction:outbound"
+   ],
+   "ts": 1791872810,
+   "count": 1,
+   "min": 4.0,
+   "max": 4.0,
+   "avg": 4.0,
+   "sum": 4.0
+  },
+  {
+   "metric": "experiment.rtp.tagged_distribution",
+   "tags": [
+    "codec:pcma",
+    "direction:outbound"
+   ],
+   "ts": 1791872810,
+   "count": 1,
+   "min": 4.0,
+   "max": 4.0,
+   "avg": 4.0,
+   "sum": 4.0
+  },
+  {
+   "metric": "experiment.rtp.invalid_distribution",
+   "tags": [
+    "direction:outbound"
+   ],
+   "ts": 1791872820,
+   "count": 1,
+   "min": -1.0,
+   "max": -1.0,
+   "avg": -1.0,
+   "sum": -1.0
+  }
+ ],
+ "counters_start_end": {
+  "start": {
+   "Event Packets": 0,
+   "Event Parse Errors": 0,
+   "Metric Packets": 25,
+   "Metric Parse Errors": 0,
+   "Udp Packets": 4,
+   "Udp Bytes": 4,
+   "Unterminated Metric Errors": 0,
+   "Service Check Packets": 0,
+   "Service Check Parse Errors": 0
+  },
+  "end": {
+   "Event Packets": 0,
+   "Event Parse Errors": 0,
+   "Metric Packets": 136,
+   "Metric Parse Errors": 6,
+   "Udp Packets": 121,
+   "Udp Bytes": 10,
+   "Unterminated Metric Errors": 0,
+   "Service Check Packets": 0,
+   "Service Check Parse Errors": 0
+  }
+ },
+ "t0_t1": [
+  1791872806,
+  1791872818
+ ]
+}

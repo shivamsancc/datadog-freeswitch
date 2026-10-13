@@ -183,6 +183,7 @@ class Testbed:
         common_extra: str = '<param name="rtp-timer-name" value="soft"/>',
         cap_net_admin: bool = False,
         codecs: str = 'PCMU',
+        esl_host_port: int | None = None,
     ) -> None:
         self.name = 'fs-metrics-testbed-' + uuid.uuid4().hex[:10]
         self.max_sessions = max_sessions
@@ -190,6 +191,7 @@ class Testbed:
         # Extra <param> lines for both sofia profiles. Without `rtp-timer-name` the minimal profiles pace no RTP at all
         # (about one datagram per second was measured), which made every earlier media statistic meaningless.
         self.common_extra = common_extra
+        self.esl_host_port = esl_host_port  # a stable host port survives a restart of the container
         self.codecs = codecs  # codec preference list of both sofia profiles
         self.cap_net_admin = cap_net_admin  # only for the impairment experiment (tc netem inside the container)
         self.edge_extra = edge_extra  # extra <param> lines for the `edge` sofia profile
@@ -251,7 +253,7 @@ class Testbed:
             '--tmpfs', '/usr/local/freeswitch/log:uid=999,gid=999',
             '--tmpfs', '/usr/local/freeswitch/db:uid=999,gid=999',
             '--tmpfs', '/usr/local/freeswitch/run:uid=999,gid=999',
-            '-p', '127.0.0.1::8021/tcp',
+            '-p', '127.0.0.1:{}:8021/tcp'.format(self.esl_host_port or ''),
             *(['--network', self.network, '--network-alias', 'fs-testbed'] if self.network else []),
             *(['--cap-add', 'NET_ADMIN'] if self.cap_net_admin else []),
             IMAGE,

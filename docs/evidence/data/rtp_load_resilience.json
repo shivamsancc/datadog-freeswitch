@@ -1,0 +1,1283 @@
+{
+ "load": {
+  "calls_13": {
+   "calls_started": 13,
+   "legs_expected": 26,
+   "events_received": 26,
+   "near_leg_events": 13,
+   "far_leg_events": 13,
+   "calls_with_both_legs": 13,
+   "calls_missing_an_event": 0,
+   "concurrent_sessions_at_peak": 26,
+   "setup_seconds": 0.7,
+   "call_duration_seconds": 11.0,
+   "events": 26,
+   "unique_event_ids": 26,
+   "duplicate_event_ids": 0,
+   "finite_mos": 26,
+   "nan_mos": 0,
+   "missing_fields": 0,
+   "mos": {
+    "min": 4.5,
+    "median": 4.5,
+    "max": 4.5
+   },
+   "quality_percentage": {
+    "min": 100.0,
+    "median": 100.0,
+    "max": 100.0
+   },
+   "delivery_lag_ms": {
+    "min": 23.49,
+    "median": 24.97,
+    "max": 26.98
+   },
+   "event_bytes": {
+    "min": 9530.0,
+    "median": 9707.0,
+    "max": 9883.0
+   },
+   "container_during_calls": {
+    "cpu": "17.17%",
+    "memory": "239.6MiB / 5.784GiB",
+    "pids": "48"
+   },
+   "udp_datagrams_per_second_in_container": 1159,
+   "observer_maxrss_kb_delta": 0
+  },
+  "calls_25": {
+   "calls_started": 25,
+   "legs_expected": 50,
+   "events_received": 50,
+   "near_leg_events": 25,
+   "far_leg_events": 25,
+   "calls_with_both_legs": 25,
+   "calls_missing_an_event": 0,
+   "concurrent_sessions_at_peak": 50,
+   "setup_seconds": 0.8,
+   "call_duration_seconds": 10.6,
+   "events": 50,
+   "unique_event_ids": 50,
+   "duplicate_event_ids": 0,
+   "finite_mos": 50,
+   "nan_mos": 0,
+   "missing_fields": 0,
+   "mos": {
+    "min": 4.5,
+    "median": 4.5,
+    "max": 4.5
+   },
+   "quality_percentage": {
+    "min": 100.0,
+    "median": 100.0,
+    "max": 100.0
+   },
+   "delivery_lag_ms": {
+    "min": 15.87,
+    "median": 20.49,
+    "max": 41.81
+   },
+   "event_bytes": {
+    "min": 9524.0,
+    "median": 9702.0,
+    "max": 9879.0
+   },
+   "container_during_calls": {
+    "cpu": "25.30%",
+    "memory": "456.3MiB / 5.784GiB",
+    "pids": "72"
+   },
+   "udp_datagrams_per_second_in_container": 2409,
+   "observer_maxrss_kb_delta": 0
+  },
+  "calls_50": {
+   "calls_started": 50,
+   "legs_expected": 100,
+   "events_received": 100,
+   "near_leg_events": 50,
+   "far_leg_events": 50,
+   "calls_with_both_legs": 50,
+   "calls_missing_an_event": 0,
+   "concurrent_sessions_at_peak": 100,
+   "setup_seconds": 1.4,
+   "call_duration_seconds": 11.0,
+   "events": 100,
+   "unique_event_ids": 100,
+   "duplicate_event_ids": 0,
+   "finite_mos": 100,
+   "nan_mos": 0,
+   "missing_fields": 0,
+   "mos": {
+    "min": 4.5,
+    "median": 4.5,
+    "max": 4.5
+   },
+   "quality_percentage": {
+    "min": 100.0,
+    "median": 100.0,
+    "max": 100.0
+   },
+   "delivery_lag_ms": {
+    "min": 19.56,
+    "median": 36.58,
+    "max": 47.23
+   },
+   "event_bytes": {
+    "min": 9522.0,
+    "median": 9701.0,
+    "max": 9883.0
+   },
+   "container_during_calls": {
+    "cpu": "17.50%",
+    "memory": "936.7MiB / 5.784GiB",
+    "pids": "122"
+   },
+   "udp_datagrams_per_second_in_container": 4686,
+   "observer_maxrss_kb_delta": 0
+  },
+  "calls_75": {
+   "calls_started": 75,
+   "legs_expected": 150,
+   "events_received": 150,
+   "near_leg_events": 75,
+   "far_leg_events": 75,
+   "calls_with_both_legs": 75,
+   "calls_missing_an_event": 0,
+   "concurrent_sessions_at_peak": 150,
+   "setup_seconds": 1.9,
+   "call_duration_seconds": 11.4,
+   "events": 150,
+   "unique_event_ids": 150,
+   "duplicate_event_ids": 0,
+   "finite_mos": 150,
+   "nan_mos": 0,
+   "missing_fields": 0,
+   "mos": {
+    "min": 4.5,
+    "median": 4.5,
+    "max": 4.5
+   },
+   "quality_percentage": {
+    "min": 100.0,
+    "median": 100.0,
+    "max": 100.0
+   },
+   "delivery_lag_ms": {
+    "min": 26.43,
+    "median": 38.47,
+    "max": 48.03
+   },
+   "event_bytes": {
+    "min": 9522.0,
+    "median": 9701.0,
+    "max": 10059.0
+   },
+   "container_during_calls": {
+    "cpu": "19.42%",
+    "memory": "1.385GiB / 5.784GiB",
+    "pids": "172"
+   },
+   "udp_datagrams_per_second_in_container": 6903,
+   "observer_maxrss_kb_delta": 0
+  }
+ },
+ "codecs_and_srtp": {
+  "PCMU_baseline": {
+   "reconcile": {
+    "calls_started": 5,
+    "legs_expected": 10,
+    "events_received": 10,
+    "near_leg_events": 5,
+    "far_leg_events": 5,
+    "calls_with_both_legs": 5,
+    "calls_missing_an_event": 0
+   },
+   "summary": {
+    "events": 10,
+    "unique_event_ids": 10,
+    "duplicate_event_ids": 0,
+    "finite_mos": 10,
+    "nan_mos": 0,
+    "missing_fields": 0,
+    "mos": {
+     "min": 4.5,
+     "median": 4.5,
+     "max": 4.5
+    },
+    "quality_percentage": {
+     "min": 100.0,
+     "median": 100.0,
+     "max": 100.0
+    },
+    "delivery_lag_ms": {
+     "min": 9.42,
+     "median": 31.05,
+     "max": 32.84
+    },
+    "event_bytes": {
+     "min": 9543.0,
+     "median": 9714.5,
+     "max": 9893.0
+    }
+   },
+   "datagrams_per_second_in_container": 548,
+   "legs": [
+    {
+     "direction": "outbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "607",
+     "out_packets": "612",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "outbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "613",
+     "out_packets": "618",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "616",
+     "out_packets": "615",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "611",
+     "out_packets": "610",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "outbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "613",
+     "out_packets": "618",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "612",
+     "out_packets": "611",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "outbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "608",
+     "out_packets": "613",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "outbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "609",
+     "out_packets": "614",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "617",
+     "out_packets": "616",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "611",
+     "out_packets": "610",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    }
+   ]
+  },
+  "PCMA": {
+   "reconcile": {
+    "calls_started": 5,
+    "legs_expected": 10,
+    "events_received": 10,
+    "near_leg_events": 5,
+    "far_leg_events": 5,
+    "calls_with_both_legs": 5,
+    "calls_missing_an_event": 0
+   },
+   "summary": {
+    "events": 10,
+    "unique_event_ids": 10,
+    "duplicate_event_ids": 0,
+    "finite_mos": 10,
+    "nan_mos": 0,
+    "missing_fields": 0,
+    "mos": {
+     "min": 4.5,
+     "median": 4.5,
+     "max": 4.5
+    },
+    "quality_percentage": {
+     "min": 100.0,
+     "median": 100.0,
+     "max": 100.0
+    },
+    "delivery_lag_ms": {
+     "min": 18.66,
+     "median": 19.7,
+     "max": 38.52
+    },
+    "event_bytes": {
+     "min": 9026.0,
+     "median": 9308.5,
+     "max": 9596.0
+    }
+   },
+   "datagrams_per_second_in_container": 536,
+   "legs": [
+    {
+     "direction": "outbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "610",
+     "out_packets": "615",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "outbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "606",
+     "out_packets": "611",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "612",
+     "out_packets": "611",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "outbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "609",
+     "out_packets": "614",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "616",
+     "out_packets": "614",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "611",
+     "out_packets": "610",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "outbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "608",
+     "out_packets": "613",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "outbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "612",
+     "out_packets": "617",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "614",
+     "out_packets": "613",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "610",
+     "out_packets": "609",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    }
+   ]
+  },
+  "SPEEX_16k_wideband": {
+   "reconcile": {
+    "calls_started": 5,
+    "legs_expected": 10,
+    "events_received": 10,
+    "near_leg_events": 5,
+    "far_leg_events": 5,
+    "calls_with_both_legs": 5,
+    "calls_missing_an_event": 0
+   },
+   "summary": {
+    "events": 10,
+    "unique_event_ids": 10,
+    "duplicate_event_ids": 0,
+    "finite_mos": 10,
+    "nan_mos": 0,
+    "missing_fields": 0,
+    "mos": {
+     "min": 4.5,
+     "median": 4.5,
+     "max": 4.5
+    },
+    "quality_percentage": {
+     "min": 100.0,
+     "median": 100.0,
+     "max": 100.0
+    },
+    "delivery_lag_ms": {
+     "min": 7.57,
+     "median": 26.53,
+     "max": 27.28
+    },
+    "event_bytes": {
+     "min": 9106.0,
+     "median": 9387.5,
+     "max": 9669.0
+    }
+   },
+   "datagrams_per_second_in_container": 540,
+   "legs": [
+    {
+     "direction": "outbound",
+     "codec": "SPEEX",
+     "rate": "16000",
+     "duration": "12",
+     "in_packets": "611",
+     "out_packets": "616",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "SPEEX",
+     "rate": "16000",
+     "duration": "12",
+     "in_packets": "614",
+     "out_packets": "613",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "SPEEX",
+     "rate": "16000",
+     "duration": "12",
+     "in_packets": "607",
+     "out_packets": "606",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "outbound",
+     "codec": "SPEEX",
+     "rate": "16000",
+     "duration": "12",
+     "in_packets": "611",
+     "out_packets": "616",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "outbound",
+     "codec": "SPEEX",
+     "rate": "16000",
+     "duration": "12",
+     "in_packets": "606",
+     "out_packets": "609",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "SPEEX",
+     "rate": "16000",
+     "duration": "12",
+     "in_packets": "611",
+     "out_packets": "610",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "SPEEX",
+     "rate": "16000",
+     "duration": "12",
+     "in_packets": "613",
+     "out_packets": "612",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "outbound",
+     "codec": "SPEEX",
+     "rate": "16000",
+     "duration": "12",
+     "in_packets": "608",
+     "out_packets": "613",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "outbound",
+     "codec": "SPEEX",
+     "rate": "16000",
+     "duration": "12",
+     "in_packets": "610",
+     "out_packets": "615",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "SPEEX",
+     "rate": "16000",
+     "duration": "12",
+     "in_packets": "615",
+     "out_packets": "614",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    }
+   ]
+  },
+  "L16_8k": {
+   "reconcile": {
+    "calls_started": 5,
+    "legs_expected": 10,
+    "events_received": 10,
+    "near_leg_events": 5,
+    "far_leg_events": 5,
+    "calls_with_both_legs": 5,
+    "calls_missing_an_event": 0
+   },
+   "summary": {
+    "events": 10,
+    "unique_event_ids": 10,
+    "duplicate_event_ids": 0,
+    "finite_mos": 10,
+    "nan_mos": 0,
+    "missing_fields": 0,
+    "mos": {
+     "min": 4.5,
+     "median": 4.5,
+     "max": 4.5
+    },
+    "quality_percentage": {
+     "min": 100.0,
+     "median": 100.0,
+     "max": 100.0
+    },
+    "delivery_lag_ms": {
+     "min": 22.39,
+     "median": 23.38,
+     "max": 25.27
+    },
+    "event_bytes": {
+     "min": 9025.0,
+     "median": 9306.0,
+     "max": 9593.0
+    }
+   },
+   "datagrams_per_second_in_container": 542,
+   "legs": [
+    {
+     "direction": "outbound",
+     "codec": "L16",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "608",
+     "out_packets": "613",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "outbound",
+     "codec": "L16",
+     "rate": "8000",
+     "duration": "13",
+     "in_packets": "611",
+     "out_packets": "616",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "L16",
+     "rate": "8000",
+     "duration": "13",
+     "in_packets": "617",
+     "out_packets": "616",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "outbound",
+     "codec": "L16",
+     "rate": "8000",
+     "duration": "13",
+     "in_packets": "614",
+     "out_packets": "619",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "L16",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "613",
+     "out_packets": "612",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "L16",
+     "rate": "8000",
+     "duration": "13",
+     "in_packets": "616",
+     "out_packets": "615",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "outbound",
+     "codec": "L16",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "610",
+     "out_packets": "615",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "outbound",
+     "codec": "L16",
+     "rate": "8000",
+     "duration": "13",
+     "in_packets": "613",
+     "out_packets": "618",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "L16",
+     "rate": "8000",
+     "duration": "13",
+     "in_packets": "615",
+     "out_packets": "614",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    },
+    {
+     "direction": "inbound",
+     "codec": "L16",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "612",
+     "out_packets": "611",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": null
+    }
+   ]
+  },
+  "SRTP_PCMU": {
+   "reconcile": {
+    "calls_started": 5,
+    "legs_expected": 10,
+    "events_received": 10,
+    "near_leg_events": 5,
+    "far_leg_events": 5,
+    "calls_with_both_legs": 5,
+    "calls_missing_an_event": 0
+   },
+   "summary": {
+    "events": 10,
+    "unique_event_ids": 10,
+    "duplicate_event_ids": 0,
+    "finite_mos": 10,
+    "nan_mos": 0,
+    "missing_fields": 0,
+    "mos": {
+     "min": 4.5,
+     "median": 4.5,
+     "max": 4.5
+    },
+    "quality_percentage": {
+     "min": 100.0,
+     "median": 100.0,
+     "max": 100.0
+    },
+    "delivery_lag_ms": {
+     "min": 11.3,
+     "median": 21.64,
+     "max": 33.06
+    },
+    "event_bytes": {
+     "min": 11368.0,
+     "median": 11684.0,
+     "max": 11999.0
+    }
+   },
+   "datagrams_per_second_in_container": 537,
+   "legs": [
+    {
+     "direction": "inbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "616",
+     "out_packets": "614",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "612",
+     "out_packets": "611",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "outbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "609",
+     "out_packets": "614",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "611",
+     "out_packets": "610",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "outbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "612",
+     "out_packets": "617",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "outbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "608",
+     "out_packets": "613",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "614",
+     "out_packets": "613",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "outbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "611",
+     "out_packets": "616",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "610",
+     "out_packets": "609",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "outbound",
+     "codec": "PCMU",
+     "rate": "8000",
+     "duration": "12",
+     "in_packets": "607",
+     "out_packets": "612",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    }
+   ]
+  },
+  "SRTP_PCMA": {
+   "reconcile": {
+    "calls_started": 5,
+    "legs_expected": 10,
+    "events_received": 10,
+    "near_leg_events": 5,
+    "far_leg_events": 5,
+    "calls_with_both_legs": 5,
+    "calls_missing_an_event": 0
+   },
+   "summary": {
+    "events": 10,
+    "unique_event_ids": 10,
+    "duplicate_event_ids": 0,
+    "finite_mos": 10,
+    "nan_mos": 0,
+    "missing_fields": 0,
+    "mos": {
+     "min": 4.5,
+     "median": 4.5,
+     "max": 4.5
+    },
+    "quality_percentage": {
+     "min": 100.0,
+     "median": 100.0,
+     "max": 100.0
+    },
+    "delivery_lag_ms": {
+     "min": 16.96,
+     "median": 20.0,
+     "max": 40.49
+    },
+    "event_bytes": {
+     "min": 10863.0,
+     "median": 11290.5,
+     "max": 11708.0
+    }
+   },
+   "datagrams_per_second_in_container": 540,
+   "legs": [
+    {
+     "direction": "outbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "13",
+     "in_packets": "610",
+     "out_packets": "618",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "13",
+     "in_packets": "619",
+     "out_packets": "618",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "13",
+     "in_packets": "617",
+     "out_packets": "613",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "outbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "13",
+     "in_packets": "615",
+     "out_packets": "622",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "outbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "13",
+     "in_packets": "610",
+     "out_packets": "618",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "13",
+     "in_packets": "619",
+     "out_packets": "618",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "13",
+     "in_packets": "622",
+     "out_packets": "619",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "outbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "13",
+     "in_packets": "616",
+     "out_packets": "621",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "inbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "13",
+     "in_packets": "616",
+     "out_packets": "614",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    },
+    {
+     "direction": "outbound",
+     "codec": "PCMA",
+     "rate": "8000",
+     "duration": "13",
+     "in_packets": "619",
+     "out_packets": "623",
+     "mos": "4.50",
+     "quality": "100.00",
+     "srtp": "AEAD_AES_256_GCM_8"
+    }
+   ]
+  },
+  "transcoding_PCMU_to_PCMA": {
+   "reconcile": {
+    "calls_started": 3,
+    "legs_expected": 6,
+    "events_received": 12,
+    "near_leg_events": 6,
+    "far_leg_events": 6,
+    "calls_with_both_legs": 3,
+    "calls_missing_an_event": 0
+   },
+   "legs": [
+    {
+     "channel_type": "edge",
+     "codec": "PCMU",
+     "in_packets": "490",
+     "mos": "4.50"
+    },
+    {
+     "channel_type": "internal",
+     "codec": "PCMU",
+     "in_packets": "0",
+     "mos": "nan"
+    },
+    {
+     "channel_type": "internal",
+     "codec": "PCMU",
+     "in_packets": "0",
+     "mos": "nan"
+    },
+    {
+     "channel_type": "internal",
+     "codec": "PCMA",
+     "in_packets": "498",
+     "mos": "4.50"
+    },
+    {
+     "channel_type": "edge",
+     "codec": "PCMU",
+     "in_packets": "489",
+     "mos": "4.50"
+    },
+    {
+     "channel_type": "internal",
+     "codec": "PCMA",
+     "in_packets": "495",
+     "mos": "4.50"
+    },
+    {
+     "channel_type": "edge",
+     "codec": "PCMA",
+     "in_packets": "0",
+     "mos": "nan"
+    },
+    {
+     "channel_type": "edge",
+     "codec": "PCMA",
+     "in_packets": "0",
+     "mos": "nan"
+    },
+    {
+     "channel_type": "internal",
+     "codec": "PCMU",
+     "in_packets": "0",
+     "mos": "nan"
+    },
+    {
+     "channel_type": "edge",
+     "codec": "PCMU",
+     "in_packets": "493",
+     "mos": "4.50"
+    },
+    {
+     "channel_type": "internal",
+     "codec": "PCMA",
+     "in_packets": "494",
+     "mos": "4.50"
+    },
+    {
+     "channel_type": "edge",
+     "codec": "PCMA",
+     "in_packets": "0",
+     "mos": "nan"
+    }
+   ]
+  }
+ },
+ "resilience": {
+  "disconnect_gap": {
+   "calls_ended_during_gap": 10,
+   "legs_lost_expected": 20,
+   "events_received_after_reconnect": 0
+  },
+  "after_reconnect": {
+   "calls_started": 5,
+   "legs_expected": 10,
+   "events_received": 10,
+   "near_leg_events": 5,
+   "far_leg_events": 5,
+   "calls_with_both_legs": 5,
+   "calls_missing_an_event": 0
+  },
+  "loss_indicator": {
+   "sessions_created_by_polling": 30,
+   "hangup_events_observed": 22,
+   "difference": 8,
+   "true_unobserved_legs": 8
+  },
+  "duplicate_subscriptions": {
+   "legs": 6,
+   "events_on_first": 6,
+   "events_on_second": 6,
+   "note": "each subscription gets its own copy; dedupe by Unique-ID if two overlap"
+  },
+  "burst_150_legs": {
+   "calls_started": 75,
+   "legs_expected": 150,
+   "events_received": 150,
+   "near_leg_events": 75,
+   "far_leg_events": 75,
+   "calls_with_both_legs": 75,
+   "calls_missing_an_event": 0,
+   "first_arrival_s": 0.04,
+   "last_arrival_s": 0.09,
+   "total_event_bytes": 1456315
+  },
+  "slow_consumer": {
+   "legs_expected": 200,
+   "events_received_after_resume": 200,
+   "disconnected_by_server": false,
+   "container": {
+    "cpu": "4.66%",
+    "memory": "1.219GiB / 5.784GiB",
+    "pids": "72"
+   }
+  },
+  "bad_password_reply": "-ERR invalid",
+  "denied_subscription_reply": "-ERR permission denied",
+  "event_only_account_reply": "+OK event listener enabled plain",
+  "event_only_account_delivery": {
+   "calls_started": 3,
+   "legs_expected": 6,
+   "events_received": 6,
+   "near_leg_events": 3,
+   "far_leg_events": 3,
+   "calls_with_both_legs": 3,
+   "calls_missing_an_event": 0
+  },
+  "freeswitch_restart": {
+   "calls_in_flight": 5,
+   "events_after_restart_on_old_subscription": 10,
+   "old_subscription_disconnected": true,
+   "sessions_created_before": 432
+  },
+  "after_restart_new_subscription": {
+   "calls_started": 3,
+   "legs_expected": 6,
+   "events_received": 6,
+   "near_leg_events": 3,
+   "far_leg_events": 3,
+   "calls_with_both_legs": 3,
+   "calls_missing_an_event": 0
+  }
+ },
+ "slow_consumer_and_hard_kill": {
+  "slow_consumer": {
+   "legs_expected": 2400,
+   "generate_seconds": 31.9,
+   "container": {
+    "cpu": "24.67%",
+    "memory": "431.9MiB / 5.784GiB",
+    "pids": "172"
+   },
+   "events_received_after_resume": 2400,
+   "unique": 2400,
+   "disconnected_by_server": false,
+   "megabytes": 21.7
+  },
+  "hard_kill": {
+   "calls_in_flight": 10,
+   "sessions_created_before": 2420,
+   "events_received": 0,
+   "subscription_disconnected": true
+  },
+  "after_hard_kill_uptime_restarted": "5"
+ },
+ "note": "Disposable FreeSWITCH 1.10.12 (Docker, 8 CPUs, 5.8 GiB), real SIP/RTP on the container loopback. Unique test ids stay in the experiment process; no UUIDs, addresses or caller data are in this file."
+}

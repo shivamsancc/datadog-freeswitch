@@ -37,7 +37,13 @@ KEEP = (
 class Observer:
     """ESL event subscriber. ``read`` can be paused to model a slow consumer."""
 
-    def __init__(self, bed: Testbed, user: str | None = None, password: str | None = None, events: str = 'CHANNEL_HANGUP_COMPLETE') -> None:
+    def __init__(
+        self,
+        bed: Testbed,
+        user: str | None = None,
+        password: str | None = None,
+        events: str = 'CHANNEL_HANGUP_COMPLETE',
+    ) -> None:
         self.sock = socket.create_connection(('127.0.0.1', bed.port), timeout=30)
         self.sock.settimeout(1)
         self.buf = b''
@@ -143,10 +149,16 @@ def summarize(events: list[dict[str, str]]) -> dict[str, object]:
         if timestamp:
             lag.append(float(event['_recv']) * 1000 - int(timestamp) / 1000)
         size.append(int(event.get('_bytes', 0)))
+
     def stats(values: list[float]) -> dict[str, float] | None:
         if not values:
             return None
-        return {'min': round(min(values), 2), 'median': round(statistics.median(values), 2), 'max': round(max(values), 2)}
+        return {
+            'min': round(min(values), 2),
+            'median': round(statistics.median(values), 2),
+            'max': round(max(values), 2),
+        }
+
     return {
         'events': len(events),
         'unique_event_ids': len(ids),
@@ -174,7 +186,9 @@ def udp_datagrams(bed: Testbed) -> int:
     return int(dict(zip(lines[0].split()[1:], lines[1].split()[1:]))['InDatagrams'])
 
 
-def start_calls(bed: Testbed, count: int, tag: str, extra: str = '', app: str = TONE, dest: str = '5000') -> list[tuple[str, str]]:
+def start_calls(
+    bed: Testbed, count: int, tag: str, extra: str = '', app: str = TONE, dest: str = '5000'
+) -> list[tuple[str, str]]:
     """Originate ``count`` calls with a unique test id carried to both legs (SIP header on the far leg)."""
     started = []
     for index in range(count):
@@ -189,7 +203,7 @@ def start_calls(bed: Testbed, count: int, tag: str, extra: str = '', app: str = 
 
 def reconcile(started: list[tuple[str, str]], events: list[dict[str, str]]) -> dict[str, object]:
     expected = {uid for uid, _ in started}
-    legs: dict[str, int] = {uid: 0 for uid in expected}
+    legs: dict[str, int] = dict.fromkeys(expected, 0)
     for event in events:
         uid = event.get('Unique-ID', '')
         if uid in legs:
@@ -222,7 +236,6 @@ def load_phase(bed: Testbed, observer: Observer) -> dict[str, object]:
         time.sleep(4)
         concurrent_legs = int(bed.raw('status').split('session(s) - peak')[0].split('\n')[-1].strip() or 0)
         stats_mid = container_stats(bed)
-        t1 = time.time()
         time.sleep(4)
         udp_rate = (udp_datagrams(bed) - udp_before) / (time.time() - t0)
         before_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
@@ -274,19 +287,26 @@ def codec_phase(bed: Testbed, observer: Observer) -> dict[str, object]:
                 'quality': event.get('variable_rtp_audio_in_quality_percentage'),
                 'srtp': event.get('variable_rtp_has_crypto'),
             })  # fmt: skip
-        results[name] = {'reconcile': reconcile(started, events), 'summary': summarize(events),
-                         'datagrams_per_second_in_container': round(rate), 'legs': rows}
+        results[name] = {
+            'reconcile': reconcile(started, events),
+            'summary': summarize(events),
+            'datagrams_per_second_in_container': round(rate),
+            'legs': rows,
+        }
         print('codec', name, results[name]['reconcile'], results[name]['summary']['mos'], flush=True)  # type: ignore[index]
         time.sleep(2)
     # transcoding: one leg PCMU, the bridged leg PCMA
-    started = start_calls(bed, 3, 'transcode', '', '&bridge({absolute_codec_string=PCMA}sofia/gateway/loopreg/5003)', '5001')
+    started = start_calls(
+        bed, 3, 'transcode', '', '&bridge({absolute_codec_string=PCMA}sofia/gateway/loopreg/5003)', '5001'
+    )
     time.sleep(10)
     bed.raw('hupall NORMAL_CLEARING')
     events = observer.read(6)
     results['transcoding_PCMU_to_PCMA'] = {
         'reconcile': reconcile(started, events),
         'legs': [{'channel_type': 'internal' if '/internal/' in e.get('Channel-Name', '') else 'edge',
-                  'codec': e.get('variable_rtp_use_codec_name'), 'in_packets': e.get('variable_rtp_audio_in_packet_count'),
+                  'codec': e.get('variable_rtp_use_codec_name'),
+                  'in_packets': e.get('variable_rtp_audio_in_packet_count'),
                   'mos': e.get('variable_rtp_audio_in_mos')} for e in events],
     }  # fmt: skip
     print('codec transcoding', results['transcoding_PCMU_to_PCMA']['reconcile'], flush=True)  # type: ignore[index]
@@ -309,8 +329,11 @@ def resilience_phase(bed: Testbed) -> dict[str, object]:
     time.sleep(2)
     again = Observer(bed)
     during_after_reconnect = again.read(4)
-    results['disconnect_gap'] = {'calls_ended_during_gap': len(started), 'legs_lost_expected': 2 * len(started),
-                                 'events_received_after_reconnect': len(during_after_reconnect)}
+    results['disconnect_gap'] = {
+        'calls_ended_during_gap': len(started),
+        'legs_lost_expected': 2 * len(started),
+        'events_received_after_reconnect': len(during_after_reconnect),
+    }
     # 2. calls that end *after* the reconnect are delivered again
     started = start_calls(bed, 5, 'after')
     time.sleep(2)
@@ -319,30 +342,53 @@ def resilience_phase(bed: Testbed) -> dict[str, object]:
     # 3. loss indicator: session counter (polled) versus events observed, with a gap in the middle
     base_created = created_total(bed)
     seen = 0
-    started = start_calls(bed, 6, 'ind1'); time.sleep(2); bed.raw('hupall NORMAL_CLEARING'); seen += len(again.read(4))
+    started = start_calls(bed, 6, 'ind1')
+    time.sleep(2)
+    bed.raw('hupall NORMAL_CLEARING')
+    seen += len(again.read(4))
     again.close()
-    started = start_calls(bed, 4, 'ind2'); time.sleep(2); bed.raw('hupall NORMAL_CLEARING'); time.sleep(1)  # unobserved
+    started = start_calls(bed, 4, 'ind2')
+    time.sleep(2)
+    bed.raw('hupall NORMAL_CLEARING')
+    time.sleep(1)  # unobserved
     again = Observer(bed)
-    started = start_calls(bed, 5, 'ind3'); time.sleep(2); bed.raw('hupall NORMAL_CLEARING'); seen += len(again.read(4))
+    started = start_calls(bed, 5, 'ind3')
+    time.sleep(2)
+    bed.raw('hupall NORMAL_CLEARING')
+    seen += len(again.read(4))
     sessions = created_total(bed) - base_created
-    results['loss_indicator'] = {'sessions_created_by_polling': sessions, 'hangup_events_observed': seen,
-                                 'difference': sessions - seen, 'true_unobserved_legs': 8}
+    results['loss_indicator'] = {
+        'sessions_created_by_polling': sessions,
+        'hangup_events_observed': seen,
+        'difference': sessions - seen,
+        'true_unobserved_legs': 8,
+    }
     # 4. duplicate delivery: two simultaneous subscriptions (reconnect race)
     second = Observer(bed)
-    started = start_calls(bed, 3, 'dup'); time.sleep(2); bed.raw('hupall NORMAL_CLEARING')
+    started = start_calls(bed, 3, 'dup')
+    time.sleep(2)
+    bed.raw('hupall NORMAL_CLEARING')
     a, b = again.read(4), second.read(1)
-    results['duplicate_subscriptions'] = {'legs': 6, 'events_on_first': len(a), 'events_on_second': len(b),
-                                          'note': 'each subscription gets its own copy; dedupe by Unique-ID if two overlap'}
+    results['duplicate_subscriptions'] = {
+        'legs': 6,
+        'events_on_first': len(a),
+        'events_on_second': len(b),
+        'note': 'each subscription gets its own copy; dedupe by Unique-ID if two overlap',
+    }
     second.close()
     # 5. burst: 150 legs hang up in one command
-    started = start_calls(bed, 75, 'burst'); time.sleep(3)
-    t = time.time(); bed.raw('hupall NORMAL_CLEARING')
+    started = start_calls(bed, 75, 'burst')
+    time.sleep(3)
+    t = time.time()
+    bed.raw('hupall NORMAL_CLEARING')
     events = again.read(12)
     arrivals = sorted(float(e['_recv']) - t for e in events)
-    results['burst_150_legs'] = {**reconcile(started, events),
-                                 'first_arrival_s': round(arrivals[0], 2) if arrivals else None,
-                                 'last_arrival_s': round(arrivals[-1], 2) if arrivals else None,
-                                 'total_event_bytes': sum(int(e['_bytes']) for e in events)}
+    results['burst_150_legs'] = {
+        **reconcile(started, events),
+        'first_arrival_s': round(arrivals[0], 2) if arrivals else None,
+        'last_arrival_s': round(arrivals[-1], 2) if arrivals else None,
+        'total_event_bytes': sum(int(e['_bytes']) for e in events),
+    }
     print('burst', results['burst_150_legs'], flush=True)
     # 6. slow consumer: do not read while 4 rounds of 50 legs hang up (about 1.8 MB of events), then read
     expected = 0
@@ -354,8 +400,12 @@ def resilience_phase(bed: Testbed) -> dict[str, object]:
         time.sleep(1)
     before = container_stats(bed)
     got = again.read(15)
-    results['slow_consumer'] = {'legs_expected': expected, 'events_received_after_resume': len(got),
-                                'disconnected_by_server': again.disconnected, 'container': before}
+    results['slow_consumer'] = {
+        'legs_expected': expected,
+        'events_received_after_resume': len(got),
+        'disconnected_by_server': again.disconnected,
+        'container': before,
+    }
     print('slow', results['slow_consumer'], flush=True)
     again.close()
     # 7. authentication failure and denied subscription
@@ -367,23 +417,31 @@ def resilience_phase(bed: Testbed) -> dict[str, object]:
     denied.close()
     allowed = Observer(bed, user='esl_ev@test.local', password=bed.restricted_password)
     results['event_only_account_reply'] = allowed.reply
-    started = start_calls(bed, 3, 'evonly'); time.sleep(2); bed.raw('hupall NORMAL_CLEARING')
+    started = start_calls(bed, 3, 'evonly')
+    time.sleep(2)
+    bed.raw('hupall NORMAL_CLEARING')
     results['event_only_account_delivery'] = reconcile(started, allowed.read(4))
     # 8. FreeSWITCH restart with calls up
-    started = start_calls(bed, 5, 'restart'); time.sleep(2)
+    started = start_calls(bed, 5, 'restart')
+    time.sleep(2)
     created_before = created_total(bed)
     bed.restart()
     try:
         lost = allowed.read(3)
     except Exception:
         lost = []
-    results['freeswitch_restart'] = {'calls_in_flight': len(started), 'events_after_restart_on_old_subscription': len(lost),
-                                     'old_subscription_disconnected': allowed.disconnected,
-                                     'sessions_created_before': created_before}
+    results['freeswitch_restart'] = {
+        'calls_in_flight': len(started),
+        'events_after_restart_on_old_subscription': len(lost),
+        'old_subscription_disconnected': allowed.disconnected,
+        'sessions_created_before': created_before,
+    }
     allowed.close()
     ready(bed)
     fresh = Observer(bed, user='esl_ev@test.local', password=bed.restricted_password)
-    started = start_calls(bed, 3, 'postrestart'); time.sleep(2); bed.raw('hupall NORMAL_CLEARING')
+    started = start_calls(bed, 3, 'postrestart')
+    time.sleep(2)
+    bed.raw('hupall NORMAL_CLEARING')
     results['after_restart_new_subscription'] = reconcile(started, fresh.read(4))
     fresh.close()
     return results
