@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:111827,45:312E81,100:4F46E5&height=210&section=header&text=FreeSWITCH%20for%20Datadog&fontSize=42&fontColor=FFFFFF&fontAlignY=35&desc=ESL-based%20monitoring%20%7C%20reproducible%20lab&descAlignY=57&descSize=16" width="100%" alt="FreeSWITCH for Datadog" />
+  <img src="https://capsule-render.vercel.app/api?type=waving&color=0:111827,45:312E81,100:4F46E5&height=210&section=header&text=FreeSWITCH%20for%20Datadog&fontSize=42&fontColor=FFFFFF&fontAlignY=35&desc=ESL-based%20monitoring%20%7C%20reproducible%20lab&descAlignY=57&descSize=16" width="100%" alt="Datadog for FreeSWITCH" />
 
   <p>
     <img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=500&size=16&duration=2800&pause=900&color=6366F1&center=true&vCenter=true&width=700&lines=Monitor+FreeSWITCH+with+Datadog;Exercise+the+Event+Socket+Library+(ESL);Validate+with+a+reproducible+Docker+lab" alt="Monitor FreeSWITCH with Datadog; exercise ESL; validate in a reproducible lab" />
